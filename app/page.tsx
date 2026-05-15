@@ -65,11 +65,14 @@ export default function Home() {
   }
 
   useEffect(() => {
-    refresh("Learning").catch(console.error);
-    fetch("/api/protocol")
-      .then((response) => response.json())
-      .then((data: Record<string, unknown>) => setSchemaPreview(data))
-      .catch(console.error);
+    const initialLoad = window.setTimeout(() => {
+      refresh("Learning").catch(console.error);
+      fetch("/api/protocol")
+        .then((response) => response.json())
+        .then((data: Record<string, unknown>) => setSchemaPreview(data))
+        .catch(console.error);
+    }, 0);
+    return () => window.clearTimeout(initialLoad);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

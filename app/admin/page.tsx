@@ -37,9 +37,12 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    load().catch(console.error);
+    const initialLoad = window.setTimeout(() => load().catch(console.error), 0);
     const interval = window.setInterval(() => load().catch(console.error), 3500);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.clearInterval(interval);
+    };
   }, []);
 
   const profile = state?.profile;
