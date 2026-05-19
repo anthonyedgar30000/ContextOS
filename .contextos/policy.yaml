@@ -1,5 +1,5 @@
-# Legacy sample ContextOS policy.
-# The active workflow gate reads .contextos/policy.yaml by default.
+# ContextOS policy for the local Git workflow gate.
+# Empty expected values are ignored.
 expected:
   remote: "https://github.com/anthonyedgar30000/ContextOS"
   branch: "cursor/contextos-verify-0186"
