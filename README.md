@@ -350,3 +350,43 @@ it can be re-run without leaving `JillyPickles/config.json` broken.
 {"action":"commit","command":"verify","detected_status":"DIVERGED","error":null,"expected":{"commit":"","protected_branch":"main","remote":"https://github.com/anthonyedgar30000/ContextOS","repo_identity":"JillyPickles"},"git":{"branch":"feature/demo","commit":"abc123","dirty":true,"remote":"https://github.com/anthonyedgar30000/ContextOS","repo_identity":"JillyPickles"},"mismatches":[{"actual":"feature/demo","expected":"main","field":"protected_branch","severity":"DIVERGED"}],"policy_path":"JillyPickles/.contextos/policy.yaml","state_path":"JillyPickles/.contextos/state_manifest.json","status":"BLOCKED","timestamp":"2026-05-19T00:00:00+00:00","tool":"contextos"}
 ```
 
+## Workspace State vs Authoritative Git State
+
+AI-generated workspace state is not authoritative by itself. Files visible in a
+Cursor session, terminal buffer, or local working tree become authoritative only
+when they are synchronized into canonical Git state.
+
+ContextOS treats these as separate boundaries:
+
+- **Cursor memory/session state** - prompts, summaries, proposed changes, and UI
+  visibility. This can describe files that are not yet present in a clone of the
+  repository.
+- **Local filesystem state** - files written to the current workspace. These can
+  still be unstaged, uncommitted, or available only inside an ephemeral agent
+  environment.
+- **Local Git history** - committed objects on a branch in the local repository.
+  These are durable locally but are not visible to other clones until pushed.
+- **Remote GitHub state** - pushed branches, commits, and pull requests. This is
+  the canonical collaboration boundary for other developers, CI, GitOps, and
+  deployment systems.
+- **Merged default branch state** - changes merged into `main`. A fresh clone or
+  `git pull` on `main` will not show feature-branch files until the PR is merged
+  or the feature branch is explicitly checked out.
+
+For example, the ContextOS/JillyPickles demo files live on the feature branch
+`cursor/contextos-verify-0186` until PR merge. A local clone that only checks
+`main` is correctly expected to show the initial repository contents.
+
+To inspect the authoritative feature branch directly:
+
+```bash
+git fetch origin cursor/contextos-verify-0186
+git checkout cursor/contextos-verify-0186
+# or inspect without checkout:
+git ls-tree -r origin/cursor/contextos-verify-0186 --name-only
+```
+
+ContextOS exists to govern this transition boundary: Cursor may generate changes
+in a workspace, but ContextOS verifies contextual legitimacy before those changes
+are committed, pushed, and allowed to influence authoritative operational state.
+
