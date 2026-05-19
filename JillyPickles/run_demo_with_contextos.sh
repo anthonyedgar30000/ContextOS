@@ -19,6 +19,27 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+
+write_stale_session() {
+  cat > "$tmpdir/session_context.json" <<'JSON'
+{
+  "active_task": "Legacy cucumber-cart cleanup",
+  "current_branch": "legacy-cucumber-context",
+  "current_repo": "JillyPickles",
+  "expected_directories": ["JillyPickles/legacy"],
+  "expected_files": ["JillyPickles/legacy/cucumber_cart.json"],
+  "expected_technologies": ["JSON config"],
+  "last_verification_time": "2000-01-01T00:00:00+00:00",
+  "originating_branch": "legacy-cucumber-context",
+  "originating_task": "Old cucumber-cart experiment",
+  "repo_assumptions": ["pickle ordering can be disabled", "old cucumber cart route is valid"],
+  "stale_assumptions": ["Cursor may still remember the old cucumber-cart experiment"],
+  "timestamp": "2000-01-01T00:00:00+00:00",
+  "unresolved_warnings": []
+}
+JSON
+}
+
 write_stale_state() {
   cat > "$tmpdir/state_manifest.json" <<'JSON'
 {
@@ -38,7 +59,7 @@ echo "1) Install hooks pointed at the JillyPickles governance policy."
 python3 install_hooks.py \
   --policy JillyPickles/.contextos/policy.yaml \
   --state JillyPickles/.contextos/state_manifest.json \
-  --session JillyPickles/.contextos/session_context.json \
+  --session "$tmpdir/session_context.json" \
   --audit-log JillyPickles/audit_log.jsonl
 
 echo ""
@@ -56,11 +77,12 @@ fi
 echo ""
 echo "4) Pre-commit verification sees stale/diverged context and blocks."
 write_stale_state
+write_stale_session
 python3 verifier.py verify \
   --action commit \
   --policy JillyPickles/.contextos/policy.yaml \
   --state "$tmpdir/state_manifest.json" \
-  --session JillyPickles/.contextos/session_context.json \
+  --session "$tmpdir/session_context.json" \
   --audit-log "$tmpdir/audit_log.jsonl"
 commit_status=$?
 echo "Simulated commit gate exit code: $commit_status"
@@ -73,11 +95,12 @@ fi
 echo ""
 echo "5) Pre-push verification blocks the same stale context before GitOps/deploy."
 write_stale_state
+write_stale_session
 python3 verifier.py verify \
   --action push \
   --policy JillyPickles/.contextos/policy.yaml \
   --state "$tmpdir/state_manifest.json" \
-  --session JillyPickles/.contextos/session_context.json \
+  --session "$tmpdir/session_context.json" \
   --audit-log "$tmpdir/audit_log.jsonl"
 push_status=$?
 echo "Simulated push gate exit code: $push_status"
