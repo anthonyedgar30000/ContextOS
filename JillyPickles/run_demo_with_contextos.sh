@@ -38,6 +38,7 @@ echo "1) Install hooks pointed at the JillyPickles governance policy."
 python3 install_hooks.py \
   --policy JillyPickles/.contextos/policy.yaml \
   --state JillyPickles/.contextos/state_manifest.json \
+  --session JillyPickles/.contextos/session_context.json \
   --audit-log JillyPickles/audit_log.jsonl
 
 echo ""
@@ -59,6 +60,7 @@ python3 verifier.py verify \
   --action commit \
   --policy JillyPickles/.contextos/policy.yaml \
   --state "$tmpdir/state_manifest.json" \
+  --session JillyPickles/.contextos/session_context.json \
   --audit-log "$tmpdir/audit_log.jsonl"
 commit_status=$?
 echo "Simulated commit gate exit code: $commit_status"
@@ -75,6 +77,7 @@ python3 verifier.py verify \
   --action push \
   --policy JillyPickles/.contextos/policy.yaml \
   --state "$tmpdir/state_manifest.json" \
+  --session JillyPickles/.contextos/session_context.json \
   --audit-log "$tmpdir/audit_log.jsonl"
 push_status=$?
 echo "Simulated push gate exit code: $push_status"

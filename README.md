@@ -42,8 +42,8 @@ This installs:
 The hooks run these commands:
 
 ```bash
-python3 verifier.py verify --action commit
-python3 verifier.py verify --action push
+python3 verifier.py verify --action commit --mode enforce --session .contextos/session_context.json
+python3 verifier.py verify --action push --mode enforce --session .contextos/session_context.json
 ```
 
 If the verifier exits non-zero, Git blocks the commit or push and prints a short
@@ -54,7 +54,7 @@ remediation checklist.
 Run:
 
 ```bash
-python3 verifier.py verify --action manual
+python3 verifier.py verify --action manual --mode advisory
 ```
 
 Optional paths:
@@ -249,14 +249,15 @@ hooks are installed by pointing the installer at target-specific paths:
 python3 install_hooks.py \
   --policy JillyPickles/.contextos/policy.yaml \
   --state JillyPickles/.contextos/state_manifest.json \
+  --session JillyPickles/.contextos/session_context.json \
   --audit-log JillyPickles/audit_log.jsonl
 ```
 
 The generated hooks still call the shared verifier:
 
 ```bash
-python3 verifier.py verify --action commit --policy JillyPickles/.contextos/policy.yaml --state JillyPickles/.contextos/state_manifest.json --audit-log JillyPickles/audit_log.jsonl
-python3 verifier.py verify --action push --policy JillyPickles/.contextos/policy.yaml --state JillyPickles/.contextos/state_manifest.json --audit-log JillyPickles/audit_log.jsonl
+python3 verifier.py verify --action commit --mode enforce --policy JillyPickles/.contextos/policy.yaml --state JillyPickles/.contextos/state_manifest.json --session JillyPickles/.contextos/session_context.json --audit-log JillyPickles/audit_log.jsonl
+python3 verifier.py verify --action push --mode enforce --policy JillyPickles/.contextos/policy.yaml --state JillyPickles/.contextos/state_manifest.json --session JillyPickles/.contextos/session_context.json --audit-log JillyPickles/audit_log.jsonl
 ```
 
 ### Execution boundary
