@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-import os
+import argparse
+import shlex
 import shutil
 import stat
 import subprocess
@@ -30,7 +31,7 @@ fi
 cd "$repo_root" || exit 1
 
 echo "ContextOS: verifying before {action}..."
-python3 verifier.py verify --action {action}
+python3 verifier.py verify --action {action} --policy {policy} --state {state} --audit-log {audit_log}
 status=$?
 
 if [ "$status" -ne 0 ]; then
@@ -40,7 +41,7 @@ if [ "$status" -ne 0 ]; then
   echo "Suggested commands:" >&2
   echo "  git status" >&2
   echo "  git branch --show-current" >&2
-  echo "  python3 verifier.py verify --action manual" >&2
+  echo "  python3 verifier.py verify --action manual --policy {policy} --state {state} --audit-log {audit_log}" >&2
   exit "$status"
 fi
 
@@ -53,10 +54,16 @@ def run_git(args: list[str]) -> str:
     return result.stdout.strip()
 
 
-def install_hook(hooks_dir: Path, name: str, action: str) -> None:
+def install_hook(hooks_dir: Path, name: str, action: str, policy: Path, state: Path, audit_log: Path) -> None:
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook_path = hooks_dir / name
-    hook_body = HOOK_TEMPLATE.format(marker=MARKER, action=action)
+    hook_body = HOOK_TEMPLATE.format(
+        marker=MARKER,
+        action=action,
+        policy=shlex.quote(str(policy)),
+        state=shlex.quote(str(state)),
+        audit_log=shlex.quote(str(audit_log)),
+    )
 
     if hook_path.exists():
         existing = hook_path.read_text(encoding="utf-8", errors="replace")
@@ -71,7 +78,16 @@ def install_hook(hooks_dir: Path, name: str, action: str) -> None:
     print(f"Installed .git/hooks/{name} -> ContextOS {action} gate")
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Install ContextOS Git workflow hooks")
+    parser.add_argument("--policy", default=".contextos/policy.yaml", type=Path, help="policy path hooks should verify")
+    parser.add_argument("--state", default=".contextos/state_manifest.json", type=Path, help="state manifest path hooks should update")
+    parser.add_argument("--audit-log", default="audit_log.jsonl", type=Path, help="audit log path hooks should append to")
+    return parser
+
+
 def main() -> int:
+    args = build_parser().parse_args()
     repo_root = Path(run_git(["rev-parse", "--show-toplevel"]))
     git_dir = Path(run_git(["rev-parse", "--git-dir"]))
     if not git_dir.is_absolute():
@@ -79,9 +95,10 @@ def main() -> int:
     hooks_dir = git_dir / "hooks"
 
     for hook_name, action in HOOKS.items():
-        install_hook(hooks_dir, hook_name, action)
+        install_hook(hooks_dir, hook_name, action, args.policy, args.state, args.audit_log)
 
     print("ContextOS hooks installed.")
+    print(f"Policy: {args.policy}")
     print("Commits and pushes now run local ContextOS verification first.")
     return 0
 

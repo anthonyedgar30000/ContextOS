@@ -1,0 +1,17 @@
+# ContextOS policy for the governed JillyPickles target application.
+expected:
+  repo_identity: "JillyPickles"
+  remote: "https://github.com/anthonyedgar30000/ContextOS"
+  protected_branch: "main"
+  commit: ""
+freshness:
+  max_age_seconds: 900
+enforcement:
+  require_verification_before_commit: true
+  require_verification_before_push: true
+  block_commit_on_divergence: true
+  block_push_on_divergence: true
+  block_commit_on_stale: true
+  block_push_on_stale: true
+  block_commit_when_dirty: false
+  block_push_when_dirty: true

@@ -1,0 +1,12 @@
+{
+  "app_name": "JillyPickles",
+  "banner": "Fresh pickles are available today.",
+  "environment": "production",
+  "feature_flags": {
+    "pickle_ordering_enabled": true
+  },
+  "routes": {
+    "home": "/",
+    "order": "/pickles/order"
+  }
+}

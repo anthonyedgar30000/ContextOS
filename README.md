@@ -199,3 +199,154 @@ The demo creates a temporary policy that intentionally expects the wrong branch,
 runs commit and push verification against it, and shows ContextOS blocking both
 protected actions. It writes demo audit output to a temporary directory and does
 not install or modify real Git hooks.
+
+## Governed target application: JillyPickles
+
+This repository also includes `JillyPickles/`, a tiny target application used to
+demonstrate why ContextOS sits at the Git boundary.
+
+JillyPickles has one visible health contract:
+
+- `environment` must be `production`.
+- `feature_flags.pickle_ordering_enabled` must be `true`.
+- `routes.order` must be `/pickles/order`.
+
+A stale assistant context can confuse the current product with an old
+"cucumber cart" experiment and produce this bad change:
+
+```json
+{
+  "environment": "legacy-demo",
+  "feature_flags": {"pickle_ordering_enabled": false},
+  "routes": {"order": "/old-cucumber-cart"}
+}
+```
+
+When that config reaches the app, `python3 JillyPickles/app.py` prints `BROKEN`
+and exits non-zero.
+
+### JillyPickles ContextOS files
+
+The governed target keeps its own local context files:
+
+- `JillyPickles/.contextos/policy.yaml`
+- `JillyPickles/.contextos/state_manifest.json`
+- `JillyPickles/.contextos/handover.md`
+- `JillyPickles/audit_log.jsonl` is created when target verification runs.
+
+The policy includes:
+
+- expected repo identity: `JillyPickles`
+- expected Git remote
+- protected branch: `main`
+- required verification before commit and push
+- freshness timeout: `900` seconds
+
+The same root `verifier.py` and `install_hooks.py` are reused. The JillyPickles
+hooks are installed by pointing the installer at target-specific paths:
+
+```bash
+python3 install_hooks.py \
+  --policy JillyPickles/.contextos/policy.yaml \
+  --state JillyPickles/.contextos/state_manifest.json \
+  --audit-log JillyPickles/audit_log.jsonl
+```
+
+The generated hooks still call the shared verifier:
+
+```bash
+python3 verifier.py verify --action commit --policy JillyPickles/.contextos/policy.yaml --state JillyPickles/.contextos/state_manifest.json --audit-log JillyPickles/audit_log.jsonl
+python3 verifier.py verify --action push --policy JillyPickles/.contextos/policy.yaml --state JillyPickles/.contextos/state_manifest.json --audit-log JillyPickles/audit_log.jsonl
+```
+
+### Execution boundary
+
+Cursor may generate changes, but ContextOS verifies contextual legitimacy before
+Git becomes authoritative and before GitOps or deployment systems reconcile
+operational state.
+
+The boundary is intentionally local:
+
+1. Cursor or a developer edits files.
+2. Git tries to commit or push.
+3. Git hooks call ContextOS.
+4. ContextOS compares Git state and target context policy.
+5. `BLOCKED` exits non-zero, so Git refuses the operation.
+6. The broken app state never becomes authoritative Git state.
+
+### Demo Flow A: governance disabled
+
+Run:
+
+```bash
+JillyPickles/run_demo_without_contextos.sh
+```
+
+Expected output shape:
+
+```text
+=== Flow A: governance disabled ===
+1) Start from a healthy JillyPickles app.
+HEALTHY: customers can order pickles.
+
+2) Stale context applies an obsolete cucumber-cart config.
+
+3) The app is now visibly broken.
+BROKEN:
+  - environment must be production for the storefront demo
+  - pickle ordering feature flag is disabled
+  - order route must be /pickles/order
+
+4) With governance disabled, no verifier runs before Git.
+   Simulated git commit: succeeds
+   Simulated git push:   succeeds
+   Result: broken JillyPickles config can become authoritative state.
+```
+
+### Demo Flow B: ContextOS enabled
+
+Run:
+
+```bash
+JillyPickles/run_demo_with_contextos.sh
+```
+
+Expected output shape:
+
+```text
+=== Flow B: ContextOS enabled ===
+1) Install hooks pointed at the JillyPickles governance policy.
+Installed .git/hooks/pre-commit -> ContextOS commit gate
+Installed .git/hooks/pre-push -> ContextOS push gate
+
+4) Pre-commit verification sees stale/diverged context and blocks.
+ContextOS verification
+Action: commit
+Status: BLOCKED
+Mismatches:
+  - protected_branch: expected 'main', found '<current-branch>' (DIVERGED)
+  - context_freshness: expected '<= 900s', found '<age>s' (STALE)
+Remediation:
+  - Run git status
+  - Verify current branch
+  - Resync Cursor context
+ContextOS blocked commit: contextual legitimacy check failed.
+Simulated commit gate exit code: 1
+
+5) Pre-push verification blocks the same stale context before GitOps/deploy.
+Status: BLOCKED
+Simulated push gate exit code: 1
+
+6) Remediation restores the healthy config; app remains healthy.
+HEALTHY: customers can order pickles.
+```
+
+The demo uses temporary state and audit files for the simulated blocked checks so
+it can be re-run without leaving `JillyPickles/config.json` broken.
+
+### Target audit event example
+
+```json
+{"action":"commit","command":"verify","detected_status":"DIVERGED","error":null,"expected":{"commit":"","protected_branch":"main","remote":"https://github.com/anthonyedgar30000/ContextOS","repo_identity":"JillyPickles"},"git":{"branch":"feature/demo","commit":"abc123","dirty":true,"remote":"https://github.com/anthonyedgar30000/ContextOS","repo_identity":"JillyPickles"},"mismatches":[{"actual":"feature/demo","expected":"main","field":"protected_branch","severity":"DIVERGED"}],"policy_path":"JillyPickles/.contextos/policy.yaml","state_path":"JillyPickles/.contextos/state_manifest.json","status":"BLOCKED","timestamp":"2026-05-19T00:00:00+00:00","tool":"contextos"}
+```
+

@@ -1,0 +1,12 @@
+{
+  "app_name": "JillyPickles",
+  "banner": "Pickle ordering is temporarily unavailable.",
+  "environment": "legacy-demo",
+  "feature_flags": {
+    "pickle_ordering_enabled": false
+  },
+  "routes": {
+    "home": "/",
+    "order": "/old-cucumber-cart"
+  }
+}

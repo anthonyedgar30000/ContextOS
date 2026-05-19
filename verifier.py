@@ -85,11 +85,7 @@ def parse_scalar(value: str) -> Any:
 
 
 def load_policy(path: Path) -> dict[str, Any]:
-    """Load the small YAML subset used by ContextOS policy files.
-
-    The MVP intentionally supports only simple key/value mappings and one level
-    of nested mappings so verification stays dependency-free and local-first.
-    """
+    """Load the small YAML subset used by ContextOS policy files."""
     policy: dict[str, Any] = {}
     current_section: dict[str, Any] | None = None
 
@@ -129,8 +125,18 @@ def load_state(path: Path) -> dict[str, Any]:
         return {}
 
 
-def collect_git_state() -> dict[str, Any]:
+def project_identity_from_policy(policy_path: Path) -> str:
+    normalized = policy_path
+    if normalized.name == "policy.yaml" and normalized.parent.name == ".contextos":
+        target_root = normalized.parent.parent
+        if str(target_root) not in {"", "."}:
+            return target_root.name
+    return Path.cwd().name
+
+
+def collect_git_state(policy_path: Path) -> dict[str, Any]:
     return {
+        "repo_identity": project_identity_from_policy(policy_path),
         "remote": run_git(["config", "--get", "remote.origin.url"]),
         "branch": run_git(["rev-parse", "--abbrev-ref", "HEAD"]),
         "commit": run_git(["rev-parse", "HEAD"]),
@@ -162,6 +168,12 @@ def mismatch(field: str, expected: Any, actual: Any, severity: str = STATUS_DIVE
         "actual": actual,
         "severity": severity,
     }
+
+
+def expected_branch_value(expected: dict[str, Any]) -> tuple[str, Any]:
+    if expected.get("branch") not in (None, ""):
+        return "branch", expected.get("branch")
+    return "protected_branch", expected.get("protected_branch")
 
 
 def freshness_findings(
@@ -201,6 +213,10 @@ def freshness_findings(
     if last_repo and last_repo != git_state["remote"]:
         findings.append(mismatch("last_verified_repo", git_state["remote"], last_repo, STATUS_STALE))
 
+    last_identity = state.get("last_verified_repo_identity")
+    if last_identity and last_identity != git_state["repo_identity"]:
+        findings.append(mismatch("last_verified_repo_identity", git_state["repo_identity"], last_identity, STATUS_STALE))
+
     return findings
 
 
@@ -220,12 +236,18 @@ def classify(
         enforcement = {}
 
     findings: list[dict[str, Any]] = []
-    for field in ("remote", "branch"):
-        expected_value = expected.get(field)
-        if expected_value in (None, ""):
-            continue
-        if str(git_state[field]) != str(expected_value):
-            findings.append(mismatch(field, expected_value, git_state[field], STATUS_DIVERGED))
+
+    expected_identity = expected.get("repo_identity")
+    if expected_identity not in (None, "") and str(git_state["repo_identity"]) != str(expected_identity):
+        findings.append(mismatch("repo_identity", expected_identity, git_state["repo_identity"], STATUS_DIVERGED))
+
+    expected_remote = expected.get("remote")
+    if expected_remote not in (None, "") and str(git_state["remote"]) != str(expected_remote):
+        findings.append(mismatch("remote", expected_remote, git_state["remote"], STATUS_DIVERGED))
+
+    branch_field, branch_value = expected_branch_value(expected)
+    if branch_value not in (None, "") and str(git_state["branch"]) != str(branch_value):
+        findings.append(mismatch(branch_field, branch_value, git_state["branch"], STATUS_DIVERGED))
 
     expected_commit = expected.get("commit")
     if expected_commit not in (None, "") and str(git_state["commit"]) != str(expected_commit):
@@ -257,7 +279,10 @@ def classify(
     if action in PROTECTED_ACTIONS:
         block_on_divergence = as_bool(enforcement.get(f"block_{action}_on_divergence"), True)
         block_on_stale = as_bool(enforcement.get(f"block_{action}_on_stale"), False)
-        if detected_status == STATUS_DIVERGED and block_on_divergence:
+        require_verification = as_bool(enforcement.get(f"require_verification_before_{action}"), True)
+        if not require_verification:
+            final_status = detected_status
+        elif detected_status == STATUS_DIVERGED and block_on_divergence:
             final_status = STATUS_BLOCKED
         elif detected_status == STATUS_STALE and block_on_stale:
             final_status = STATUS_BLOCKED
@@ -266,13 +291,13 @@ def classify(
 
 
 def ensure_parent(path: Path) -> None:
-    if path.parent != Path(""):
-        path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def write_state(path: Path, action: str, status: str, git_state: dict[str, Any], timestamp: datetime) -> None:
     state = {
         "last_verification_timestamp": timestamp.isoformat(),
+        "last_verified_repo_identity": git_state["repo_identity"],
         "last_verified_branch": git_state["branch"],
         "last_verified_repo": git_state["remote"],
         "last_verified_action": action,
@@ -338,10 +363,11 @@ def print_report(
 
     if git_state:
         print("Git:")
-        print(f"  repo:   {git_state['remote']}")
-        print(f"  branch: {git_state['branch']}")
-        print(f"  commit: {git_state['commit']}")
-        print(f"  tree:   {human_bool(bool(git_state['dirty']))}")
+        print(f"  identity: {git_state['repo_identity']}")
+        print(f"  repo:     {git_state['remote']}")
+        print(f"  branch:   {git_state['branch']}")
+        print(f"  commit:   {git_state['commit']}")
+        print(f"  tree:     {human_bool(bool(git_state['dirty']))}")
 
     if findings:
         print("Mismatches:")
@@ -387,7 +413,7 @@ def verify(policy_path: Path, audit_log_path: Path, state_path: Path, action: st
     try:
         policy = load_policy(policy_path)
         state = load_state(state_path)
-        git_state = collect_git_state()
+        git_state = collect_git_state(policy_path)
         status, detected_status, findings = classify(policy, state, git_state, action, timestamp)
         write_state(state_path, action, status, git_state, timestamp)
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
