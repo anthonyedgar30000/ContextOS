@@ -1,0 +1,7 @@
+# ContextOS local verification policy.
+# Empty expected values are ignored by the verifier.
+expected:
+  remote: "https://github.com/anthonyedgar30000/ContextOS"
+  branch: "cursor/contextos-verify-0186"
+  commit: "5db497bd15e67e958ebab9a95e9fcba77c49c2e5"
+require_clean_tree: true

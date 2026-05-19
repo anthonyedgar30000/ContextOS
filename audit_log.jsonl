@@ -1,0 +1,1 @@
+{"command":"verify","error":null,"expected":{"branch":"main","commit":"abc123","remote":"https://github.com/example/contextos"},"git":{"branch":"main","commit":"abc123","dirty":false,"remote":"https://github.com/example/contextos"},"mismatches":[],"policy_path":"policy.yaml","status":"VALID","timestamp":"2026-05-19T00:00:00+00:00","tool":"contextos"}
