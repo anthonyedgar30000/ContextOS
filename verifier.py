@@ -337,7 +337,7 @@ def session_findings(
                 expected_repo,
                 session_repo,
                 STATUS_DIVERGED,
-                "AI session is anchored to a different project context",
+                f"The model was thinking about {session_repo}",
             )
         )
 

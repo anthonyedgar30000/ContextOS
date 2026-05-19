@@ -565,7 +565,7 @@ Action: commit
 Status: BLOCKED
 Context: DIVERGED
 Reasons:
-  - AI session is anchored to a different project context
+  - The model was thinking about ClientA
   - modified files outside declared AI task scope
   - AI context freshness expired
 Suggested remediation:
