@@ -30,18 +30,18 @@ fi
 
 cd "$repo_root" || exit 1
 
-echo "ContextOS: verifying before {action}..."
-python3 verifier.py verify --action {action} --policy {policy} --state {state} --audit-log {audit_log}
+echo "ContextOS: verifying AI execution context before {action}..."
+python3 verifier.py verify --action {action} --mode {mode} --policy {policy} --state {state} --session {session} --audit-log {audit_log}
 status=$?
 
 if [ "$status" -ne 0 ]; then
   echo "" >&2
   echo "ContextOS blocked {action}." >&2
-  echo "Resolve the findings above, then retry the Git operation." >&2
+  echo "AI-generated workspace state is not authoritative until context verification passes." >&2
   echo "Suggested commands:" >&2
   echo "  git status" >&2
   echo "  git branch --show-current" >&2
-  echo "  python3 verifier.py verify --action manual --policy {policy} --state {state} --audit-log {audit_log}" >&2
+  echo "  python3 verifier.py verify --action manual --mode advisory --policy {policy} --state {state} --session {session} --audit-log {audit_log}" >&2
   exit "$status"
 fi
 
@@ -54,14 +54,25 @@ def run_git(args: list[str]) -> str:
     return result.stdout.strip()
 
 
-def install_hook(hooks_dir: Path, name: str, action: str, policy: Path, state: Path, audit_log: Path) -> None:
+def install_hook(
+    hooks_dir: Path,
+    name: str,
+    action: str,
+    policy: Path,
+    state: Path,
+    session: Path,
+    audit_log: Path,
+    mode: str,
+) -> None:
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook_path = hooks_dir / name
     hook_body = HOOK_TEMPLATE.format(
         marker=MARKER,
         action=action,
+        mode=shlex.quote(mode),
         policy=shlex.quote(str(policy)),
         state=shlex.quote(str(state)),
+        session=shlex.quote(str(session)),
         audit_log=shlex.quote(str(audit_log)),
     )
 
@@ -73,16 +84,18 @@ def install_hook(hooks_dir: Path, name: str, action: str, policy: Path, state: P
             print(f"Backed up existing {name} hook to {backup_path}")
 
     hook_path.write_text(hook_body, encoding="utf-8")
-    mode = hook_path.stat().st_mode
-    hook_path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    print(f"Installed .git/hooks/{name} -> ContextOS {action} gate")
+    mode_bits = hook_path.stat().st_mode
+    hook_path.chmod(mode_bits | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    print(f"Installed .git/hooks/{name} -> ContextOS {action} gate ({mode} mode)")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Install ContextOS Git workflow hooks")
     parser.add_argument("--policy", default=".contextos/policy.yaml", type=Path, help="policy path hooks should verify")
     parser.add_argument("--state", default=".contextos/state_manifest.json", type=Path, help="state manifest path hooks should update")
+    parser.add_argument("--session", default=".contextos/session_context.json", type=Path, help="AI session context path hooks should verify")
     parser.add_argument("--audit-log", default="audit_log.jsonl", type=Path, help="audit log path hooks should append to")
+    parser.add_argument("--mode", choices=["advisory", "enforce"], default="enforce", help="hook enforcement mode")
     return parser
 
 
@@ -95,11 +108,13 @@ def main() -> int:
     hooks_dir = git_dir / "hooks"
 
     for hook_name, action in HOOKS.items():
-        install_hook(hooks_dir, hook_name, action, args.policy, args.state, args.audit_log)
+        install_hook(hooks_dir, hook_name, action, args.policy, args.state, args.session, args.audit_log, args.mode)
 
     print("ContextOS hooks installed.")
     print(f"Policy: {args.policy}")
-    print("Commits and pushes now run local ContextOS verification first.")
+    print(f"Session: {args.session}")
+    print(f"Mode: {args.mode}")
+    print("Commits and pushes now verify local AI execution context first.")
     return 0
 
 

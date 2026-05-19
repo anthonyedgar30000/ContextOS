@@ -1,12 +1,12 @@
-# ContextOS policy for the governed JillyPickles target application.
+# ContextOS policy for the freelancer ClientB handoff demo.
 expected:
-  repo_identity: "JillyPickles"
+  repo_identity: "ClientB"
   remote: "https://github.com/anthonyedgar30000/ContextOS"
-  protected_branch: "main"
+  branch: "cursor/contextos-verify-0186"
   commit: ""
 freshness:
-  max_age_seconds: 900
-  aging_seconds: 450
+  max_age_seconds: 600
+  aging_seconds: 300
 enforcement:
   require_verification_before_commit: true
   require_verification_before_push: true
@@ -15,7 +15,7 @@ enforcement:
   block_commit_on_stale: true
   block_push_on_stale: true
   block_commit_when_dirty: false
-  block_push_when_dirty: true
+  block_push_when_dirty: false
   scope_violation_action: block
   dependency_config_action: warn
 protected_paths:
@@ -23,6 +23,7 @@ protected_paths:
   - "deploy/*"
   - "infra/*"
   - "billing/*"
+  - "auth/*"
 dependency_config_paths:
-  - "JillyPickles/config.json"
-  - "JillyPickles/**/config*.json"
+  - "demo_freelancer_context_switch/ClientB/site_config.json"
+  - "demo_freelancer_context_switch/ClientB/**/*.json"

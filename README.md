@@ -390,3 +390,207 @@ ContextOS exists to govern this transition boundary: Cursor may generate changes
 in a workspace, but ContextOS verifies contextual legitimacy before those changes
 are committed, pushed, and allowed to influence authoritative operational state.
 
+## AI-Native Developer Safety Layer
+
+ContextOS is intentionally small and freelancer-friendly:
+
+- It is **not** enterprise governance software.
+- It is **not** a replacement for GitOps, CI, or CD.
+- It is a local-first context verification layer for AI-assisted coding
+  workflows.
+
+Core distinction:
+
+- Git tracks code state.
+- ContextOS tracks AI execution context.
+
+That matters because Cursor can generate edits from stale assumptions: the wrong
+client, wrong branch, wrong framework, or wrong task scope. Git can tell you what
+changed, but it cannot tell whether those changes match the AI session that
+produced them.
+
+### AI execution boundary
+
+The execution boundary is the moment before consequential Git mutation:
+
+1. Cursor suggests or writes workspace changes.
+2. ContextOS reads `.contextos/session_context.json` and `.contextos/policy.yaml`.
+3. ContextOS compares AI assumptions, task scope, changed files, protected paths,
+   current Git branch, remote tracking, and context age.
+4. ContextOS writes local state/audit files.
+5. In `enforce` mode, `BLOCKED` exits non-zero before commit or push.
+
+AI-generated workspace state must not be confused with authoritative operational
+state until canonical Git synchronization occurs.
+
+### AI session context
+
+`.contextos/session_context.json` tracks the AI-side execution context:
+
+```json
+{
+  "current_repo": "workspace",
+  "current_branch": "cursor/contextos-verify-0186",
+  "active_task": "Extend ContextOS into an AI-native safety layer",
+  "expected_files": ["verifier.py", "README.md"],
+  "expected_directories": ["demo_freelancer_context_switch"],
+  "expected_technologies": ["Python stdlib", "Git hooks", "JSON"],
+  "timestamp": "2026-05-19T00:00:00+00:00",
+  "last_verification_time": "2026-05-19T00:00:00+00:00"
+}
+```
+
+The verifier updates last verification metadata and records unresolved warnings
+or stale assumptions for handoff.
+
+### Context freshness scoring
+
+ContextOS now reports a separate AI context score:
+
+- `FRESH` - AI session context, Git state, and task scope are aligned.
+- `AGING` - context is still usable but has warnings, such as a dirty tree or
+  aging verification timestamp.
+- `STALE` - elapsed time, dependency/config mutation, protected path touch, or
+  behind-remote state requires review.
+- `DIVERGED` - AI assumptions no longer match Git or target project identity.
+
+The classic gate statuses remain:
+
+- `VALID`
+- `STALE`
+- `DIVERGED`
+- `BLOCKED`
+
+### Scope enforcement
+
+Session context declares expected files and directories. If Cursor modifies files
+outside that scope, ContextOS can warn or block based on policy:
+
+```yaml
+enforcement:
+  scope_violation_action: warn
+```
+
+or:
+
+```yaml
+enforcement:
+  scope_violation_action: block
+```
+
+Example: a task scoped to `JillyPickles/config.json` should not silently modify
+CI, deployment, auth, billing, or infrastructure files.
+
+### High consequence files
+
+Policy can define protected paths:
+
+```yaml
+protected_paths:
+  - ".github/workflows/*"
+  - "deploy/*"
+  - "infra/*"
+  - "billing/*"
+```
+
+Protected-path changes require explicit re-verification before commit or push.
+This is lightweight and local: no service, database, Kubernetes, ticketing
+system, or external SaaS dependency is involved.
+
+### Advisory vs enforce mode
+
+Use advisory mode while exploring:
+
+```bash
+python3 verifier.py verify --action manual --mode advisory
+```
+
+Use enforce mode at the Git boundary:
+
+```bash
+python3 verifier.py verify --action commit --mode enforce
+python3 verifier.py verify --action push --mode enforce
+```
+
+Hooks installed by `install_hooks.py` default to enforce mode:
+
+```bash
+python3 install_hooks.py --mode enforce
+```
+
+Advisory mode prints the same drift and remediation information but returns zero
+so the developer can keep exploring.
+
+### Freelancer context-switch demo
+
+A realistic solo-developer failure mode lives in
+`demo_freelancer_context_switch/`:
+
+```text
+demo_freelancer_context_switch/
+  ClientA/site_config.json
+  ClientB/site_config.json
+  ClientB/.contextos/policy.yaml
+  ClientB/.contextos/session_context.json
+  check_client_b.py
+  stale_client_a_change_for_client_b.json
+  run_without_contextos.sh
+  run_with_contextos.sh
+```
+
+Scenario:
+
+1. A freelancer works on ClientA.
+2. They switch to ClientB.
+3. Cursor retains stale ClientA assumptions.
+4. AI edits ClientB with ClientA config.
+5. Without ContextOS, the simulated commit/push succeeds and ClientB breaks.
+6. With ContextOS, the commit gate sees ClientA session context against ClientB
+   policy and blocks before Git becomes authoritative.
+
+Run:
+
+```bash
+demo_freelancer_context_switch/run_without_contextos.sh
+demo_freelancer_context_switch/run_with_contextos.sh
+```
+
+Expected ContextOS output shape:
+
+```text
+ContextOS AI context verification
+Mode: enforce
+Action: commit
+Status: BLOCKED
+Context: DIVERGED
+Reasons:
+  - AI session is anchored to a different project context
+  - modified files outside declared AI task scope
+  - AI context freshness expired
+Suggested remediation:
+  1. Run git status
+  2. Verify current branch
+  3. Re-run verification
+  4. Update task scope or resync Cursor context
+ContextOS blocked commit: AI context legitimacy check failed.
+```
+
+### Daily workflow for Cursor freelancers
+
+A practical routine:
+
+1. Start a task by editing `.contextos/session_context.json` with the active
+   client/repo, branch, expected files, directories, and technologies.
+2. Ask Cursor to work inside that scope.
+3. Run `python3 verifier.py verify --action manual --mode advisory` before
+   reviewing changes.
+4. If ContextOS reports `AGING`, review warnings and continue intentionally.
+5. If ContextOS reports `STALE` or `DIVERGED`, run `git status`, verify branch,
+   resync Cursor context, or update task scope.
+6. Let pre-commit/pre-push hooks enforce the boundary before Git state becomes
+   authoritative.
+
+ContextOS complements Git and GitOps: Git remains the source of code truth;
+ContextOS verifies whether AI-generated changes are contextually legitimate
+before they enter that source of truth.
+

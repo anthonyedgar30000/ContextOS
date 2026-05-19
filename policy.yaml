@@ -1,15 +1,41 @@
-# Legacy sample ContextOS policy.
-# The active workflow gate reads .contextos/policy.yaml by default.
+# Legacy sample ContextOS policy. The active workflow gate reads .contextos/policy.yaml by default.
+# ContextOS policy for a local-first AI-assisted development workflow.
 expected:
+  repo_identity: "workspace"
   remote: "https://github.com/anthonyedgar30000/ContextOS"
   branch: "cursor/contextos-verify-0186"
   commit: ""
 freshness:
   max_age_seconds: 3600
+  aging_seconds: 1800
 enforcement:
+  require_verification_before_commit: true
+  require_verification_before_push: true
   block_commit_on_divergence: true
   block_push_on_divergence: true
   block_commit_on_stale: false
   block_push_on_stale: false
   block_commit_when_dirty: false
   block_push_when_dirty: true
+  scope_violation_action: warn
+  dependency_config_action: warn
+protected_paths:
+  - ".github/workflows/*"
+  - "deploy/*"
+  - "infra/*"
+  - "billing/*"
+dependency_config_paths:
+  - "requirements*.txt"
+  - "**/requirements*.txt"
+  - "package.json"
+  - "**/package.json"
+  - "pyproject.toml"
+  - "**/pyproject.toml"
+  - "Dockerfile"
+  - "**/Dockerfile"
+  - ".env*"
+  - "**/.env*"
+  - "*config*.json"
+  - "**/*config*.json"
+  - "*config*.yaml"
+  - "**/*config*.yaml"

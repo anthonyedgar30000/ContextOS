@@ -1,0 +1,7 @@
+{
+  "brand_color": "green",
+  "client": "ClientB",
+  "payments_enabled": true,
+  "public_route": "/client-b/shop",
+  "support_email": "help@client-b.example"
+}

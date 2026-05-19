@@ -1,0 +1,26 @@
+{
+  "active_task": "Update ClientB storefront copy only",
+  "current_branch": "cursor/contextos-verify-0186",
+  "current_repo": "ClientB",
+  "expected_directories": [
+    "demo_freelancer_context_switch/ClientB/ui"
+  ],
+  "expected_files": [
+    "demo_freelancer_context_switch/ClientB/site_config.json"
+  ],
+  "expected_technologies": [
+    "JSON config",
+    "static storefront"
+  ],
+  "last_verification_time": "2026-05-19T06:25:54.590702+00:00",
+  "originating_branch": "cursor/contextos-verify-0186",
+  "originating_task": "ClientB storefront maintenance",
+  "repo_assumptions": [
+    "ClientB context only",
+    "payments stay enabled",
+    "public route stays /client-b/shop"
+  ],
+  "stale_assumptions": [],
+  "timestamp": "2026-05-19T06:25:54.590702+00:00",
+  "unresolved_warnings": []
+}

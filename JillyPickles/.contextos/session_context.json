@@ -1,0 +1,26 @@
+{
+  "active_task": "Maintain JillyPickles storefront configuration safely",
+  "current_branch": "main",
+  "current_repo": "JillyPickles",
+  "expected_directories": [
+    "JillyPickles/ui"
+  ],
+  "expected_files": [
+    "JillyPickles/config.json"
+  ],
+  "expected_technologies": [
+    "Python stdlib",
+    "JSON config"
+  ],
+  "last_verification_time": "2026-05-19T06:24:53.879568+00:00",
+  "originating_branch": "main",
+  "originating_task": "JillyPickles governed target app demo",
+  "repo_assumptions": [
+    "pickle ordering remains enabled",
+    "order route stays /pickles/order",
+    "production environment remains active"
+  ],
+  "stale_assumptions": [],
+  "timestamp": "2026-05-19T06:24:53.879568+00:00",
+  "unresolved_warnings": []
+}

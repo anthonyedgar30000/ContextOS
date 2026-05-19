@@ -1,0 +1,35 @@
+{
+  "active_task": "Extend ContextOS into a lightweight AI-native safety layer for Cursor freelancers and solo developers",
+  "current_branch": "cursor/contextos-verify-0186",
+  "current_repo": "workspace",
+  "expected_directories": [
+    "demo_freelancer_context_switch",
+    "JillyPickles/demo_context_drift"
+  ],
+  "expected_files": [
+    "verifier.py",
+    "install_hooks.py",
+    "README.md",
+    "policy.yaml",
+    ".contextos/*",
+    "JillyPickles/.contextos/*"
+  ],
+  "expected_technologies": [
+    "Python stdlib",
+    "Git hooks",
+    "JSON",
+    "YAML subset",
+    "shell scripts"
+  ],
+  "last_verification_time": "2026-05-19T06:24:53.879568+00:00",
+  "originating_branch": "cursor/contextos-verify-0186",
+  "originating_task": "ContextOS AI context governance phase",
+  "repo_assumptions": [
+    "local-first only",
+    "no cloud dependencies",
+    "Git remains authoritative after commit/push"
+  ],
+  "stale_assumptions": [],
+  "timestamp": "2026-05-19T06:24:53.879568+00:00",
+  "unresolved_warnings": []
+}
