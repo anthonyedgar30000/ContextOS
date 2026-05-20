@@ -207,7 +207,9 @@ passed or failed.
 ## Demos
 
 - `demos/jillypickles-stale-plan/` contains a reproducible stale
-  execution-plan demo using a local JillyPickles repository.
+  execution-context demo using a local JillyPickles repository, including sample
+  repo setup, context packets, failure/remediation notes, expected output, and a
+  screenshots placeholder.
 
 ## ContextOS ingest
 

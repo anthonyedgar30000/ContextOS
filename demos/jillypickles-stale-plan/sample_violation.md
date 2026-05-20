@@ -1,7 +1,8 @@
 # Sample violation
 
-The stale execution plan was generated on `feature/clientA`, where the reviewed
-context only allowed changes to Client A documentation and recommendation code.
+The stale execution context was generated on `feature/clientA`, where the
+reviewed context only allowed changes to Client A documentation and
+recommendation code.
 
 After switching locally to `main`, the simulated assistant continues as if it is
 still operating under the `feature/clientA` context and stages a deployment

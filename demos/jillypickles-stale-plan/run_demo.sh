@@ -29,8 +29,11 @@ run git -C "$DEMO_REPO" config user.name "JillyPickles Demo"
 mkdir -p "$DEMO_REPO/src/jillypickles" "$DEMO_REPO/docs" "$DEMO_REPO/deploy"
 cp "$REPO_ROOT/contextos" "$DEMO_REPO/contextos"
 cp "$REPO_ROOT/contextos.py" "$DEMO_REPO/contextos.py"
+cp "$REPO_ROOT/git_command_explanations.py" "$DEMO_REPO/git_command_explanations.py"
+cp "$REPO_ROOT/install_hooks.py" "$DEMO_REPO/install_hooks.py"
 cp "$REPO_ROOT/verify_cli.py" "$DEMO_REPO/verify_cli.py"
 chmod +x "$DEMO_REPO/contextos"
+chmod +x "$DEMO_REPO/install_hooks.py"
 
 cat > "$DEMO_REPO/src/jillypickles/recommendations.py" <<'PY'
 def client_a_recommendation():
@@ -53,8 +56,14 @@ cat > "$DEMO_REPO/session.json" <<'JSON'
 {}
 JSON
 
+cat > "$DEMO_REPO/.gitignore" <<'GITIGNORE'
+__pycache__/
+*.pyc
+GITIGNORE
+
 cat > "$DEMO_REPO/policy.yaml" <<'YAML'
 allowed_paths:
+  - .gitignore
   - context_packet.yaml
   - docs/clientA.md
   - src/jillypickles/recommendations.py
@@ -63,6 +72,8 @@ allowed_paths:
   - .contextos/session_context.json
   - contextos
   - contextos.py
+  - git_command_explanations.py
+  - install_hooks.py
   - verify_cli.py
 protected_paths:
   - ".github/workflows/**"
@@ -104,6 +115,9 @@ YAML
 
 run "$DEMO_REPO/contextos" --repo "$DEMO_REPO" ingest "$DEMO_REPO/context_packet.yaml"
 
+section "Install ContextOS pre-commit hook"
+run python3 "$DEMO_REPO/install_hooks.py" --repo "$DEMO_REPO" --mode enforce
+
 section "3. Switch locally to BranchB"
 run git -C "$DEMO_REPO" checkout "$BRANCH_B"
 
@@ -128,6 +142,18 @@ set -e
 printf '\nverification exit code: %s\n' "$VERIFY_EXIT"
 if [ "$VERIFY_EXIT" -eq 0 ]; then
   printf 'demo failed: verification unexpectedly passed\n' >&2
+  exit 1
+fi
+
+section "8. Attempt commit and observe hook block"
+set +e
+git -C "$DEMO_REPO" commit -m "Scale JillyPickles production replicas"
+COMMIT_EXIT=$?
+set -e
+
+printf '\ncommit exit code: %s\n' "$COMMIT_EXIT"
+if [ "$COMMIT_EXIT" -eq 0 ]; then
+  printf 'demo failed: commit unexpectedly passed\n' >&2
   exit 1
 fi
 

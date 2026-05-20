@@ -1,0 +1,9 @@
+project: JillyPickles
+repo: JillyPickles
+branch: main
+task: Review production deployment settings before changing deploy files
+allowed_paths:
+  - context_packet.yaml
+  - deploy/production.yml
+  - policy.yaml
+  - session.json
