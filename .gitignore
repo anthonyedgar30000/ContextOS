@@ -1,3 +1,12 @@
 __pycache__/
 *.pyc
-.contextos/
+.contextos/session_context.json
+.contextos/audit/generated_issue.md
+.contextos/audit/issue_packets/*
+.contextos/audit/generated_issues/*
+.contextos/audit/cursor_responses/*
+.contextos/audit/verification_reports/*
+!.contextos/audit/issue_packets/.gitkeep
+!.contextos/audit/generated_issues/.gitkeep
+!.contextos/audit/cursor_responses/.gitkeep
+!.contextos/audit/verification_reports/.gitkeep

@@ -217,6 +217,89 @@ passed or failed.
   including the abstract, problem statement, design model, deterministic
   enforcement model, demo walkthrough, limitations, future work, and glossary.
 
+## GitHub Issue bridge workflow
+
+ContextOS supports structured, auditable coordination between reasoning systems
+and authoritative Git workflows. The bridge is intentionally local-first:
+ContextOS generates GitHub Issue markdown on disk and does not call the GitHub
+API. It does not execute implementation work, create GitHub Issues, or post
+comments automatically.
+
+```text
+ChatGPT
+  |
+  v
+GitHub Issue markdown generated from .contextos/issue_packet.yaml
+  |
+  v
+Cursor repo-local analysis and implementation
+  |
+  v
+GitHub comment/report using .contextos/cursor_response_template.md
+  |
+  v
+ChatGPT review and human approval
+```
+
+Create local issue markdown:
+
+```sh
+./contextos create-issue
+```
+
+Inputs:
+
+- `.contextos/issue_packet.yaml`
+- local Git branch and HEAD state
+- local remote-tracking metadata when available
+
+Outputs:
+
+- `.contextos/audit/generated_issue.md`
+- timestamped issue packet snapshots under `.contextos/audit/issue_packets/`
+- timestamped generated issue markdown under `.contextos/audit/generated_issues/`
+- reserved Cursor response storage under `.contextos/audit/cursor_responses/`
+- reserved verification report storage under `.contextos/audit/verification_reports/`
+
+The issue body includes task summary, expected branch, allowed mutation scope,
+protected paths, assumptions, risks, acceptance criteria, required verification
+steps, and context freshness metadata:
+
+- current branch
+- current HEAD hash
+- timestamp
+- freshness classification: `FRESH`, `AGING`, `STALE`, or `DIVERGED`
+
+The Cursor response template lives at:
+
+```text
+.contextos/cursor_response_template.md
+```
+
+It includes sections for proposed implementation plan, files likely touched,
+risks, tests required, branch assumptions, unresolved questions, recommended Git
+actions, and deterministic explanations for those Git commands.
+
+### Reasoning vs authority separation
+
+ChatGPT and Cursor may reason about tasks, summarize context, propose plans, and
+produce implementation reports. They do not become the approval authority.
+Humans remain responsible for:
+
+- deciding whether to post the generated GitHub Issue
+- approving implementation scope
+- reviewing Cursor's response
+- approving commits, pull requests, and merges
+
+### Workflow limitations
+
+- `contextos create-issue` only generates local markdown; it does not create a
+  GitHub Issue.
+- Freshness is based on local Git metadata.
+- Generated issue markdown should be reviewed before posting.
+- The bridge coordinates handoff context; it does not replace tests, review, or
+  merge approval.
+
 ## ContextOS ingest
 
 Convert a reviewed ChatGPT context packet into deterministic local execution

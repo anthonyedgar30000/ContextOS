@@ -264,5 +264,116 @@ class ExplainGitTests(unittest.TestCase):
         )
 
 
+class CreateIssueTests(unittest.TestCase):
+    def write_issue_packet(self, path: Path, branch: str = "main") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "project: ContextOS\n"
+            "repo: ContextOS\n"
+            f"branch: {branch}\n"
+            "task: Add issue bridge\n"
+            "objective: Coordinate ChatGPT and Cursor through GitHub Issues.\n"
+            "allowed_paths:\n"
+            "  - README.md\n"
+            "  - contextos.py\n"
+            "protected_paths:\n"
+            "  - .env\n"
+            "assumptions:\n"
+            "  - GitHub Issue markdown is generated locally first.\n"
+            "risks:\n"
+            "  - Branch may become stale before implementation.\n"
+            "acceptance_criteria:\n"
+            "  - Generated markdown includes freshness metadata.\n",
+            encoding="utf-8",
+        )
+
+    def test_load_issue_packet_validates_required_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            packet_path = Path(temp_dir) / "issue_packet.yaml"
+            packet_path.write_text(
+                "project: ContextOS\n"
+                "repo: ContextOS\n"
+                "branch: main\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(contextos.ContextOSError, "objective"):
+                contextos.load_issue_packet(packet_path)
+
+    def test_create_issue_generates_markdown_and_audit_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            branch = git_current_branch(repo)
+            packet_path = repo / ".contextos" / "issue_packet.yaml"
+            self.write_issue_packet(packet_path, branch)
+            output_path = repo / ".contextos" / "audit" / "generated_issue.md"
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "create-issue",
+                        "--packet",
+                        str(packet_path),
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("# Add issue bridge", output)
+            self.assertIn("## Context freshness", output)
+            self.assertIn(f"- Current branch: {branch}", output)
+            self.assertIn("- Freshness classification: FRESH", output)
+            self.assertIn("No GitHub API call was made by ContextOS", output)
+            self.assertTrue(output_path.exists())
+            self.assertIn("## Required verification steps", output_path.read_text())
+            self.assertTrue(
+                any(
+                    (repo / ".contextos" / "audit" / "issue_packets").glob(
+                        "*_issue_packet.yaml"
+                    )
+                )
+            )
+            self.assertTrue(
+                any(
+                    (repo / ".contextos" / "audit" / "generated_issues").glob(
+                        "*_issue.md"
+                    )
+                )
+            )
+
+    def test_create_issue_marks_stale_when_branch_mismatches_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            packet_path = repo / ".contextos" / "issue_packet.yaml"
+            self.write_issue_packet(packet_path, "feature/clientA")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "create-issue",
+                        "--packet",
+                        str(packet_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("- Freshness classification: STALE", output)
+            self.assertIn("- issue packet expects branch feature/clientA", output)
+            self.assertIn("- current branch is", output)
+
+
 if __name__ == "__main__":
     unittest.main()

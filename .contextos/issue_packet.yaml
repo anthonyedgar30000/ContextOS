@@ -1,0 +1,30 @@
+project: ContextOS
+repo: ContextOS
+branch: main
+task: Add GitHub Issue bridge workflow
+objective: Coordinate ChatGPT review and Cursor implementation through a local-first GitHub Issue handoff.
+allowed_paths:
+  - .contextos/issue_packet.yaml
+  - .contextos/cursor_response_template.md
+  - .contextos/audit
+  - README.md
+  - contextos.py
+  - tests/test_contextos.py
+protected_paths:
+  - ".github/workflows/**"
+  - "deploy/**"
+  - "infra/**"
+  - ".env"
+assumptions:
+  - GitHub Issues are used as a shared human-readable handoff surface.
+  - ContextOS generates markdown locally before any GitHub interaction.
+  - Humans remain responsible for approving issue creation, implementation, and merge.
+risks:
+  - Issue packet branch may become stale before implementation starts.
+  - Generated markdown may need human editing before posting.
+  - Protected paths must remain blocked unless explicitly reviewed.
+acceptance_criteria:
+  - contextos create-issue reads .contextos/issue_packet.yaml.
+  - generated issue markdown includes freshness metadata.
+  - generated artifacts are stored under .contextos/audit/.
+  - no GitHub API calls are performed.

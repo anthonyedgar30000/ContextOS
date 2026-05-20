@@ -34,7 +34,49 @@ class ContextPacket:
     allowed_paths: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class IssuePacket:
+    project: str
+    repo: str
+    branch: str
+    task: str
+    objective: str
+    allowed_paths: tuple[str, ...]
+    protected_paths: tuple[str, ...]
+    assumptions: tuple[str, ...]
+    risks: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IssueFreshness:
+    timestamp: str
+    current_branch: str
+    current_head_hash: str
+    classification: str
+    reasons: tuple[str, ...]
+
+
 REQUIRED_PACKET_FIELDS = ("project", "repo", "branch", "task", "allowed_paths")
+REQUIRED_ISSUE_PACKET_FIELDS = (
+    "project",
+    "repo",
+    "branch",
+    "task",
+    "objective",
+    "allowed_paths",
+    "protected_paths",
+    "assumptions",
+    "risks",
+    "acceptance_criteria",
+)
+ISSUE_PACKET_LIST_FIELDS = {
+    "allowed_paths",
+    "protected_paths",
+    "assumptions",
+    "risks",
+    "acceptance_criteria",
+}
 
 
 def strip_yaml_comment(line: str) -> str:
@@ -91,7 +133,12 @@ def parse_inline_yaml_list(value: str, *, source: str) -> list[str]:
     return [parse_yaml_scalar(item, source=source) for item in items]
 
 
-def parse_context_packet_yaml(text: str) -> dict[str, object]:
+def parse_simple_yaml(
+    text: str,
+    *,
+    source_name: str,
+    list_fields: set[str],
+) -> dict[str, object]:
     packet: dict[str, object] = {}
     active_list_key: str | None = None
 
@@ -108,22 +155,22 @@ def parse_context_packet_yaml(text: str) -> dict[str, object]:
             key, separator, value = line.partition(":")
             if not separator:
                 raise ContextOSError(
-                    f"context_packet.yaml line {line_number}: expected '<field>:'"
+                    f"{source_name} line {line_number}: expected '<field>:'"
                 )
 
             key = key.strip()
             if not key:
                 raise ContextOSError(
-                    f"context_packet.yaml line {line_number}: field name cannot be empty"
+                    f"{source_name} line {line_number}: field name cannot be empty"
                 )
 
             value = value.strip()
-            if key == "allowed_paths":
+            if key in list_fields:
                 active_list_key = key
                 packet[key] = (
                     parse_inline_yaml_list(
                         value,
-                        source=f"context_packet.yaml line {line_number}",
+                        source=f"{source_name} line {line_number}",
                     )
                     if value
                     else []
@@ -131,27 +178,43 @@ def parse_context_packet_yaml(text: str) -> dict[str, object]:
             else:
                 packet[key] = parse_yaml_scalar(
                     value,
-                    source=f"context_packet.yaml line {line_number}",
+                    source=f"{source_name} line {line_number}",
                 )
             continue
 
         if active_list_key is None:
             raise ContextOSError(
-                f"context_packet.yaml line {line_number}: unexpected nested value"
+                f"{source_name} line {line_number}: unexpected nested value"
             )
         if not line.startswith("- "):
             raise ContextOSError(
-                f"context_packet.yaml line {line_number}: expected '- <value>'"
+                f"{source_name} line {line_number}: expected '- <value>'"
             )
         packet.setdefault(active_list_key, [])
         packet[active_list_key].append(
             parse_yaml_scalar(
                 line[2:],
-                source=f"context_packet.yaml line {line_number}",
+                source=f"{source_name} line {line_number}",
             )
         )
 
     return packet
+
+
+def parse_context_packet_yaml(text: str) -> dict[str, object]:
+    return parse_simple_yaml(
+        text,
+        source_name="context_packet.yaml",
+        list_fields={"allowed_paths"},
+    )
+
+
+def parse_issue_packet_yaml(text: str) -> dict[str, object]:
+    return parse_simple_yaml(
+        text,
+        source_name="issue_packet.yaml",
+        list_fields=ISSUE_PACKET_LIST_FIELDS,
+    )
 
 
 def normalize_repo_path(path: str, *, source: str) -> str:
@@ -231,6 +294,87 @@ def load_context_packet(path: Path) -> ContextPacket:
     )
 
 
+def require_scalar(packet: dict[str, object], field: str, source_name: str) -> str:
+    value = packet[field]
+    if not isinstance(value, str) or not value.strip():
+        raise ContextOSError(f"{source_name} field '{field}' must be a string")
+    return value.strip()
+
+
+def require_string_list(
+    packet: dict[str, object],
+    field: str,
+    source_name: str,
+    *,
+    normalize_paths: bool = False,
+    require_non_empty: bool = False,
+) -> tuple[str, ...]:
+    value = packet[field]
+    if not isinstance(value, list):
+        raise ContextOSError(f"{source_name} field '{field}' must be a list")
+    if require_non_empty and not value:
+        raise ContextOSError(f"{source_name} field '{field}' must be non-empty")
+    if not all(isinstance(item, str) and item.strip() for item in value):
+        raise ContextOSError(f"{source_name} field '{field}' entries must be strings")
+
+    if normalize_paths:
+        return tuple(
+            dict.fromkeys(
+                normalize_repo_path(
+                    item,
+                    source=f"{source_name} {field}",
+                )
+                for item in value
+            )
+        )
+
+    return tuple(dict.fromkeys(item.strip() for item in value))
+
+
+def load_issue_packet(path: Path) -> IssuePacket:
+    try:
+        packet = parse_issue_packet_yaml(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ContextOSError(f"issue packet not found: {path}") from error
+
+    missing_fields = [
+        field for field in REQUIRED_ISSUE_PACKET_FIELDS if field not in packet
+    ]
+    if missing_fields:
+        raise ContextOSError(
+            "issue packet missing required fields: " + ", ".join(missing_fields)
+        )
+
+    return IssuePacket(
+        project=require_scalar(packet, "project", "issue packet"),
+        repo=require_scalar(packet, "repo", "issue packet"),
+        branch=require_scalar(packet, "branch", "issue packet"),
+        task=require_scalar(packet, "task", "issue packet"),
+        objective=require_scalar(packet, "objective", "issue packet"),
+        allowed_paths=require_string_list(
+            packet,
+            "allowed_paths",
+            "issue packet",
+            normalize_paths=True,
+            require_non_empty=True,
+        ),
+        protected_paths=require_string_list(
+            packet,
+            "protected_paths",
+            "issue packet",
+            normalize_paths=True,
+        ),
+        assumptions=require_string_list(packet, "assumptions", "issue packet"),
+        risks=require_string_list(packet, "risks", "issue packet"),
+        acceptance_criteria=require_string_list(
+            packet,
+            "acceptance_criteria",
+            "issue packet",
+            require_non_empty=True,
+        ),
+    )
+
+
 def run_git(args: Sequence[str], repo: Path) -> str:
     command = ["git", *args]
     completed = subprocess.run(
@@ -262,12 +406,69 @@ def head_hash(repo: Path) -> str:
     return run_git(["rev-parse", "HEAD"], repo)
 
 
+def try_run_git(args: Sequence[str], repo: Path) -> str | None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip()
+
+
+def upstream_branch(repo: Path) -> str | None:
+    return try_run_git(
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        repo,
+    )
+
+
+def local_branch_behind_reason(repo: Path) -> str | None:
+    upstream = upstream_branch(repo)
+    if upstream is None:
+        return None
+
+    counts = try_run_git(
+        ["rev-list", "--left-right", "--count", f"HEAD...{upstream}"],
+        repo,
+    )
+    if counts is None:
+        return None
+
+    parts = counts.split()
+    if len(parts) != 2:
+        raise ContextOSError(f"unexpected git rev-list output: {counts!r}")
+
+    try:
+        behind_count = int(parts[1])
+    except ValueError as error:
+        raise ContextOSError(f"unexpected git rev-list output: {counts!r}") from error
+
+    if behind_count == 0:
+        return None
+
+    commit_label = "commit" if behind_count == 1 else "commits"
+    return f"local branch is behind {upstream} by {behind_count} {commit_label}"
+
+
 def utc_timestamp() -> str:
     return (
         datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
+    )
+
+
+def audit_timestamp() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .strftime("%Y%m%dT%H%M%SZ")
     )
 
 
@@ -380,6 +581,162 @@ def explain_git(command: Sequence[str], output_format: str) -> int:
     return 0
 
 
+def markdown_list(items: Sequence[str]) -> str:
+    if not items:
+        return "- (none)"
+    return "\n".join(f"- {item}" for item in items)
+
+
+def issue_freshness(packet: IssuePacket, repo: Path) -> IssueFreshness:
+    current = current_branch(repo)
+    current_head = head_hash(repo)
+    reasons = []
+    is_detached = current == "(detached HEAD)"
+    behind_reason = local_branch_behind_reason(repo)
+
+    if packet.branch != current:
+        reasons.append(f"issue packet expects branch {packet.branch}")
+        reasons.append(f"current branch is {current}")
+    if is_detached:
+        reasons.append("current repository is in detached HEAD state")
+    if behind_reason is not None:
+        reasons.append(behind_reason)
+
+    if is_detached:
+        classification = "DIVERGED"
+    elif packet.branch != current:
+        classification = "STALE"
+    elif behind_reason is not None:
+        classification = "AGING"
+    else:
+        classification = "FRESH"
+
+    return IssueFreshness(
+        timestamp=utc_timestamp(),
+        current_branch=current,
+        current_head_hash=current_head,
+        classification=classification,
+        reasons=tuple(dict.fromkeys(reasons)),
+    )
+
+
+def render_issue_markdown(packet: IssuePacket, freshness: IssueFreshness) -> str:
+    return "\n".join(
+        [
+            f"# {packet.task}",
+            "",
+            "## Task summary",
+            "",
+            f"- Project: {packet.project}",
+            f"- Repository: {packet.repo}",
+            f"- Expected branch: {packet.branch}",
+            f"- Objective: {packet.objective}",
+            "",
+            "## Context freshness",
+            "",
+            f"- Timestamp: {freshness.timestamp}",
+            f"- Current branch: {freshness.current_branch}",
+            f"- Current HEAD hash: {freshness.current_head_hash}",
+            f"- Freshness classification: {freshness.classification}",
+            "",
+            "### Freshness reasons",
+            markdown_list(freshness.reasons),
+            "",
+            "## Allowed mutation scope",
+            markdown_list(packet.allowed_paths),
+            "",
+            "## Protected paths",
+            markdown_list(packet.protected_paths),
+            "",
+            "## Assumptions",
+            markdown_list(packet.assumptions),
+            "",
+            "## Risks",
+            markdown_list(packet.risks),
+            "",
+            "## Acceptance criteria",
+            markdown_list(packet.acceptance_criteria),
+            "",
+            "## Required verification steps",
+            "",
+            "1. Confirm the current branch matches the expected branch.",
+            "2. Run `python3 verify_cli.py --session session.json --policy policy.yaml --protected-mode enforce`.",
+            "3. Review protected path warnings or failures.",
+            "4. Attach or reference the markdown audit report if verification fails.",
+            "",
+            "## Coordination model",
+            "",
+            "- ChatGPT prepares or reviews the issue packet.",
+            "- GitHub Issue stores the human-readable handoff.",
+            "- Cursor performs repo-local analysis and implementation.",
+            "- Cursor response is posted as a GitHub comment/report after human review.",
+            "- ChatGPT reviews the report and any resulting PR.",
+            "",
+            "## Authority boundary",
+            "",
+            "Reasoning systems may propose and summarize work. Humans remain the approval authority for issue creation, implementation acceptance, and merge decisions.",
+            "",
+            "## GitHub API status",
+            "",
+            "No GitHub API call was made by ContextOS. This markdown was generated locally for review before posting.",
+            "",
+        ]
+    )
+
+
+def write_issue_audit_artifacts(
+    *,
+    repo: Path,
+    packet_path: Path,
+    issue_markdown: str,
+    output_path: Path,
+) -> tuple[Path, Path]:
+    audit_root = repo / ".contextos" / "audit"
+    packet_dir = audit_root / "issue_packets"
+    issue_dir = audit_root / "generated_issues"
+    packet_dir.mkdir(parents=True, exist_ok=True)
+    issue_dir.mkdir(parents=True, exist_ok=True)
+
+    stamp = audit_timestamp()
+    packet_snapshot = packet_dir / f"{stamp}_issue_packet.yaml"
+    generated_issue = issue_dir / f"{stamp}_issue.md"
+
+    packet_snapshot.write_text(packet_path.read_text(encoding="utf-8"), encoding="utf-8")
+    generated_issue.write_text(issue_markdown, encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(issue_markdown, encoding="utf-8")
+    return packet_snapshot, generated_issue
+
+
+def create_issue(packet_path: Path, repo: Path, output_path: Path | None) -> int:
+    root = repo_root(repo)
+    if not packet_path.is_absolute():
+        packet_path = root / packet_path
+    packet = load_issue_packet(packet_path)
+    freshness = issue_freshness(packet, root)
+    issue_markdown = render_issue_markdown(packet, freshness)
+
+    if output_path is None:
+        output_path = root / ".contextos" / "audit" / "generated_issue.md"
+    elif not output_path.is_absolute():
+        output_path = root / output_path
+
+    packet_snapshot, generated_issue = write_issue_audit_artifacts(
+        repo=root,
+        packet_path=packet_path,
+        issue_markdown=issue_markdown,
+        output_path=output_path,
+    )
+
+    print(issue_markdown)
+    print("Generated issue markdown:")
+    print(f"  {output_path}")
+    print("Audit artifacts:")
+    print(f"  issue packet: {packet_snapshot}")
+    print(f"  generated issue: {generated_issue}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="contextos",
@@ -417,6 +774,21 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=argparse.REMAINDER,
         help="Git command to explain, for example: git status",
     )
+    create_issue_parser = subparsers.add_parser(
+        "create-issue",
+        help="generate local GitHub Issue markdown from an issue packet",
+    )
+    create_issue_parser.add_argument(
+        "--packet",
+        default=Path(".contextos/issue_packet.yaml"),
+        type=Path,
+        help="path to issue_packet.yaml (default: .contextos/issue_packet.yaml)",
+    )
+    create_issue_parser.add_argument(
+        "--output",
+        type=Path,
+        help="path for generated issue markdown (default: .contextos/audit/generated_issue.md)",
+    )
 
     return parser
 
@@ -430,6 +802,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return ingest(args.context_packet, args.repo)
         if args.command == "explain-git":
             return explain_git(args.git_command, args.format)
+        if args.command == "create-issue":
+            return create_issue(args.packet, args.repo, args.output)
     except ContextOSError as error:
         print(f"contextos: ERROR: {error}", file=sys.stderr)
         return 2
