@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 import verify_cli
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def git_init(repo: Path) -> None:
@@ -28,6 +33,36 @@ def git_current_branch(repo: Path) -> str:
         stdout=subprocess.PIPE,
         text=True,
     ).stdout.strip()
+
+
+def configure_git_identity(repo: Path) -> None:
+    subprocess.run(
+        ["git", "config", "user.email", "tests@example.com"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Verification Tests"],
+        cwd=repo,
+        check=True,
+    )
+
+
+def prepare_hook_repo(repo: Path) -> None:
+    git_init(repo)
+    configure_git_identity(repo)
+    (repo / ".githooks").mkdir()
+    shutil.copy2(REPO_ROOT / "verify_cli.py", repo / "verify_cli.py")
+    shutil.copy2(
+        REPO_ROOT / ".githooks" / "pre-commit",
+        repo / ".githooks" / "pre-commit",
+    )
+    os.chmod(repo / ".githooks" / "pre-commit", 0o755)
+    subprocess.run(
+        ["git", "config", "core.hooksPath", ".githooks"],
+        cwd=repo,
+        check=True,
+    )
 
 
 class PolicyParsingTests(unittest.TestCase):
@@ -85,6 +120,76 @@ class AuditReportTests(unittest.TestCase):
             report,
         )
         self.assertIn("## Git Status Summary\n```text\n M README.md\n```", report)
+
+
+class PreCommitHookTests(unittest.TestCase):
+    def test_pre_commit_hook_allows_commit_when_verification_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            prepare_hook_repo(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - .githooks/pre-commit\n"
+                "  - allowed.txt\n"
+                "  - policy.yaml\n"
+                "  - session.json\n"
+                "  - verify_cli.py\n",
+                encoding="utf-8",
+            )
+            (repo / "allowed.txt").write_text("allowed\n", encoding="utf-8")
+
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            commit = subprocess.run(
+                ["git", "commit", "-m", "allowed commit"],
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            commit_output = commit.stdout + commit.stderr
+            self.assertEqual(commit.returncode, 0, commit_output)
+            self.assertIn("pre-commit verification: passed", commit_output)
+
+    def test_pre_commit_hook_fails_commit_when_verification_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            prepare_hook_repo(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - .githooks/pre-commit\n"
+                "  - allowed.txt\n"
+                "  - policy.yaml\n"
+                "  - session.json\n"
+                "  - verify_cli.py\n",
+                encoding="utf-8",
+            )
+            (repo / "allowed.txt").write_text("allowed\n", encoding="utf-8")
+            (repo / "blocked.txt").write_text("blocked\n", encoding="utf-8")
+
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            commit = subprocess.run(
+                ["git", "commit", "-m", "blocked commit"],
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            commit_output = commit.stdout + commit.stderr
+            self.assertNotEqual(commit.returncode, 0)
+            self.assertIn("verification:", commit_output)
+            self.assertIn("blocked.txt", commit_output)
+            self.assertIn(
+                "pre-commit verification: failed; commit aborted",
+                commit_output,
+            )
 
 
 class VerifyCliIntegrationTests(unittest.TestCase):

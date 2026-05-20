@@ -30,3 +30,12 @@ terminal output with colored pass/fail status, expected versus actual branch,
 explicit mismatch reasons, and unauthorized files. When `--report` is provided,
 the CLI writes a markdown audit report containing a UTC timestamp, repo, branch,
 changed files, allowed files, violations, and git status summary.
+
+Enable the tracked pre-commit hook to run verification before each commit:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook executes `python3 verify_cli.py --session session.json --policy
+policy.yaml --repo <repo-root>` and aborts the commit when verification fails.
