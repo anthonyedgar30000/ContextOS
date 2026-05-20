@@ -1,5 +1,31 @@
 # ContextOS
 
+## ContextOS ingest
+
+Convert a reviewed ChatGPT context packet into deterministic local execution
+context:
+
+```sh
+./contextos ingest context_packet.yaml
+```
+
+Example `context_packet.yaml`:
+
+```yaml
+project: ContextOS
+repo: ContextOS
+branch: main
+task: Add local ingest command
+allowed_paths:
+  - README.md
+  - src
+```
+
+The ingest command validates required packet fields, compares `repo` and
+`branch` with the current local Git repository, and fails clearly on mismatch.
+When valid, it writes `.contextos/session_context.json` with the packet context,
+UTC timestamp, current Git HEAD hash, and `source: chatgpt_context_packet`.
+
 ## Verification CLI
 
 Run the deterministic verification CLI from the repository root:
