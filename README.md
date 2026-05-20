@@ -235,6 +235,64 @@ The ingest command validates required packet fields, compares `repo` and
 When valid, it writes `.contextos/session_context.json` with the packet context,
 UTC timestamp, current Git HEAD hash, and `source: chatgpt_context_packet`.
 
+## Git command explanations
+
+Use `contextos explain-git` when documenting or recommending Git commands. The
+output is deterministic and includes what the command does, risk classification,
+potential consequences, and whether it changes state.
+
+Terminal output:
+
+```sh
+./contextos explain-git git status
+```
+
+```text
+Recommended:
+git status
+
+Explanation:
+Shows current repository state including modified files, staged files, untracked files, and branch status.
+
+Risk:
+READ_ONLY
+
+Potential consequences:
+No repository files, refs, or remotes are changed.
+
+Changes state:
+no
+```
+
+Markdown output:
+
+```sh
+./contextos explain-git --format markdown git reset --hard HEAD
+```
+
+````markdown
+### Recommended Git command
+
+```sh
+git reset --hard HEAD
+```
+
+**Explanation:** Resets tracked files to the latest commit and permanently discards uncommitted tracked-file changes.
+
+**Risk:** `DESTRUCTIVE`
+
+**Potential consequences:** Uncommitted tracked-file changes are lost. Untracked files are not removed.
+
+**Changes state:** yes
+````
+
+Supported risk classifications:
+
+- `READ_ONLY`
+- `STATE_CHANGING`
+- `REMOTE_CHANGING`
+- `DESTRUCTIVE`
+
 ## Verification CLI
 
 Run the deterministic verification CLI from the repository root:
@@ -354,3 +412,27 @@ Suggested remediation:
 
 The repository also includes `.githooks/pre-commit` for workflows that prefer
 `git config core.hooksPath .githooks`.
+
+Recommended:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Explanation:
+
+Configures this repository to load Git hooks from the tracked `.githooks`
+directory.
+
+Risk:
+
+`STATE_CHANGING`
+
+Potential consequences:
+
+Local repository configuration changes. Future Git commands can run hooks from
+`.githooks`.
+
+Changes state:
+
+yes

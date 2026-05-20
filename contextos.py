@@ -13,6 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from git_command_explanations import (
+    GitCommandExplanationError,
+    explain_git_command,
+    render_markdown_explanation,
+    render_terminal_explanation,
+)
+
 
 class ContextOSError(Exception):
     """Raised for clear, user-facing ContextOS command failures."""
@@ -354,6 +361,25 @@ def ingest(packet_path: Path, repo: Path) -> int:
     return 0
 
 
+def explain_git(command: Sequence[str], output_format: str) -> int:
+    if not command:
+        raise ContextOSError("explain-git requires a Git command")
+
+    try:
+        explanation = explain_git_command(command)
+    except GitCommandExplanationError as error:
+        raise ContextOSError(str(error)) from error
+
+    if output_format == "terminal":
+        print(render_terminal_explanation(explanation))
+    elif output_format == "markdown":
+        print(render_markdown_explanation(explanation))
+    else:
+        raise ContextOSError("format must be either terminal or markdown")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="contextos",
@@ -376,6 +402,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="path to context_packet.yaml",
     )
+    explain_parser = subparsers.add_parser(
+        "explain-git",
+        help="explain a recommended Git command",
+    )
+    explain_parser.add_argument(
+        "--format",
+        choices=("terminal", "markdown"),
+        default="terminal",
+        help="output format (default: terminal)",
+    )
+    explain_parser.add_argument(
+        "git_command",
+        nargs=argparse.REMAINDER,
+        help="Git command to explain, for example: git status",
+    )
 
     return parser
 
@@ -387,6 +428,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "ingest":
             return ingest(args.context_packet, args.repo)
+        if args.command == "explain-git":
+            return explain_git(args.git_command, args.format)
     except ContextOSError as error:
         print(f"contextos: ERROR: {error}", file=sys.stderr)
         return 2

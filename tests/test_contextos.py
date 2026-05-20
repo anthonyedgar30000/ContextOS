@@ -217,5 +217,52 @@ class ContextosIngestTests(unittest.TestCase):
             self.assertFalse((repo / ".contextos" / "session_context.json").exists())
 
 
+class ExplainGitTests(unittest.TestCase):
+    def test_explain_git_renders_terminal_output(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = contextos.main(["explain-git", "git", "status"])
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("Recommended:\ngit status", output)
+        self.assertIn("Explanation:", output)
+        self.assertIn("Risk:\nREAD_ONLY", output)
+        self.assertIn("Changes state:\nno", output)
+
+    def test_explain_git_renders_markdown_output(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            exit_code = contextos.main(
+                [
+                    "explain-git",
+                    "--format",
+                    "markdown",
+                    "git",
+                    "reset",
+                    "--hard",
+                    "HEAD",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("### Recommended Git command", output)
+        self.assertIn("git reset --hard HEAD", output)
+        self.assertIn("**Risk:** `DESTRUCTIVE`", output)
+        self.assertIn("**Changes state:** yes", output)
+
+    def test_explain_git_fails_for_unknown_command(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = contextos.main(["explain-git", "git", "unknown-command"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn(
+            "no deterministic explanation is registered",
+            stderr.getvalue(),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
