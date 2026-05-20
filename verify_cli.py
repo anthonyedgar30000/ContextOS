@@ -28,10 +28,20 @@ class Policy:
 
 
 @dataclass(frozen=True)
+class Session:
+    expected_branch: str | None = None
+
+
+@dataclass(frozen=True)
 class GitStatusEntry:
     code: str
     path: str
     original_path: str | None = None
+
+
+GREEN = "\033[32m"
+RED = "\033[31m"
+RESET = "\033[0m"
 
 
 def strip_yaml_comment(line: str) -> str:
@@ -128,6 +138,19 @@ def parse_policy_yaml(text: str) -> Policy:
     return Policy(allowed_paths=tuple(dict.fromkeys(allowed_paths)))
 
 
+def parse_session_json(data: object) -> Session:
+    if not isinstance(data, dict) or "expected_branch" not in data:
+        return Session()
+
+    expected_branch = data["expected_branch"]
+    if not isinstance(expected_branch, str) or not expected_branch.strip():
+        raise VerificationError(
+            "session.json expected_branch must be a non-empty string"
+        )
+
+    return Session(expected_branch=expected_branch.strip())
+
+
 def normalize_repo_path(path: str, source: str) -> str:
     raw_path = path.strip().replace("\\", "/")
     if raw_path.startswith("/"):
@@ -148,10 +171,10 @@ def normalize_repo_path(path: str, source: str) -> str:
     return normalized
 
 
-def load_session(path: Path) -> object:
+def load_session(path: Path) -> Session:
     try:
         with path.open("r", encoding="utf-8") as session_file:
-            return json.load(session_file)
+            return parse_session_json(json.load(session_file))
     except FileNotFoundError as error:
         raise VerificationError(f"session file not found: {path}") from error
     except json.JSONDecodeError as error:
@@ -188,6 +211,11 @@ def run_git(args: Sequence[str], repo: Path, *, binary: bool = False) -> str | b
             f"{stderr.strip() or 'no error output'}"
         )
     return completed.stdout
+
+
+def current_branch(repo: Path) -> str:
+    branch = run_git(["branch", "--show-current"], repo).strip()
+    return branch or "(detached HEAD)"
 
 
 def parse_git_status_z(raw_status: bytes) -> list[GitStatusEntry]:
@@ -246,6 +274,10 @@ def is_allowed(path: str, allowed_paths: Sequence[str]) -> bool:
     )
 
 
+def colorize(text: str, color: str) -> str:
+    return f"{color}{text}{RESET}"
+
+
 def print_section(title: str, lines: Iterable[str]) -> None:
     print(title)
     rendered_lines = list(lines)
@@ -266,10 +298,23 @@ def render_status_entries(entries: Iterable[GitStatusEntry]) -> list[str]:
     return sorted(rendered)
 
 
+def branch_mismatch_reason(
+    expected_branch: str | None, actual_branch: str
+) -> str | None:
+    if expected_branch is None or expected_branch == actual_branch:
+        return None
+    return f"branch mismatch: expected {expected_branch}, actual {actual_branch}"
+
+
+def unauthorized_file_reason(path: str) -> str:
+    return f"unauthorized file: {path} (not under allowed_paths)"
+
+
 def verify(session_path: Path, policy_path: Path, repo: Path) -> int:
-    load_session(session_path)
+    session = load_session(session_path)
     policy = load_policy(policy_path)
 
+    actual_branch = current_branch(repo)
     raw_status = run_git(["status", "--porcelain=v1", "-z"], repo, binary=True)
     diff_output = run_git(["diff", "--name-only"], repo)
 
@@ -280,10 +325,23 @@ def verify(session_path: Path, policy_path: Path, repo: Path) -> int:
     disallowed_paths = sorted(
         path for path in changed_paths if not is_allowed(path, policy.allowed_paths)
     )
+    mismatch_reasons = [
+        reason
+        for reason in [branch_mismatch_reason(session.expected_branch, actual_branch)]
+        if reason is not None
+    ]
+    mismatch_reasons.extend(unauthorized_file_reason(path) for path in disallowed_paths)
 
     print(f"session: {session_path}")
     print(f"policy: {policy_path}")
     print(f"repo: {repo}")
+    print_section(
+        "branch:",
+        [
+            f"expected: {session.expected_branch or '(not specified)'}",
+            f"actual: {actual_branch}",
+        ],
+    )
     print_section("allowed paths:", policy.allowed_paths)
     print_section(
         "$ git status --porcelain=v1 -z:",
@@ -294,14 +352,17 @@ def verify(session_path: Path, policy_path: Path, repo: Path) -> int:
         sorted(changed_paths_from_diff(diff_output)),
     )
 
-    if disallowed_paths:
+    if mismatch_reasons:
         print()
-        print("verification: FAILED")
-        print_section("changed files outside allowed paths:", disallowed_paths)
+        print_section("mismatch reasons:", mismatch_reasons)
+        print_section("unauthorized files:", disallowed_paths)
+        print(f"verification: {colorize('FAILED', RED)}")
         return 1
 
     print()
-    print("verification: PASSED")
+    print_section("mismatch reasons:", [])
+    print_section("unauthorized files:", [])
+    print(f"verification: {colorize('PASSED', GREEN)}")
     return 0
 
 

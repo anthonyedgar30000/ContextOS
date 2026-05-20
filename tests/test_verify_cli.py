@@ -10,6 +10,26 @@ from pathlib import Path
 import verify_cli
 
 
+def git_init(repo: Path) -> None:
+    subprocess.run(
+        ["git", "init"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def git_current_branch(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+
+
 class PolicyParsingTests(unittest.TestCase):
     def test_parses_allowed_paths_block(self) -> None:
         policy = verify_cli.parse_policy_yaml(
@@ -44,9 +64,13 @@ class VerifyCliIntegrationTests(unittest.TestCase):
     def test_fails_when_status_contains_disallowed_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
-            subprocess.run(["git", "init"], cwd=repo, check=True, stdout=subprocess.PIPE)
+            git_init(repo)
+            actual_branch = git_current_branch(repo)
 
-            (repo / "session.json").write_text('{"session":"test"}\n', encoding="utf-8")
+            (repo / "session.json").write_text(
+                f'{{"expected_branch":"{actual_branch}"}}\n',
+                encoding="utf-8",
+            )
             (repo / "policy.yaml").write_text(
                 "allowed_paths:\n"
                 "  - session.json\n"
@@ -73,8 +97,105 @@ class VerifyCliIntegrationTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 1)
             output = stdout.getvalue()
-            self.assertIn("verification: FAILED", output)
+            self.assertIn(f"expected: {actual_branch}", output)
+            self.assertIn(f"actual: {actual_branch}", output)
+            self.assertIn("mismatch reasons:", output)
+            self.assertIn(
+                "unauthorized file: secret.txt (not under allowed_paths)",
+                output,
+            )
+            self.assertIn("unauthorized files:", output)
             self.assertIn("secret.txt", output)
+            self.assertIn(
+                f"verification: {verify_cli.RED}FAILED{verify_cli.RESET}",
+                output,
+            )
+
+    def test_fails_when_expected_branch_does_not_match_actual_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            actual_branch = git_current_branch(repo)
+            expected_branch = f"{actual_branch}-expected"
+
+            (repo / "session.json").write_text(
+                f'{{"expected_branch":"{expected_branch}"}}\n',
+                encoding="utf-8",
+            )
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - session.json\n"
+                "  - policy.yaml\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn(f"expected: {expected_branch}", output)
+            self.assertIn(f"actual: {actual_branch}", output)
+            self.assertIn(
+                f"branch mismatch: expected {expected_branch}, actual {actual_branch}",
+                output,
+            )
+            self.assertIn("unauthorized files:\n  (none)", output)
+            self.assertIn(
+                f"verification: {verify_cli.RED}FAILED{verify_cli.RESET}",
+                output,
+            )
+
+    def test_pass_output_is_colorized_and_lists_no_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            actual_branch = git_current_branch(repo)
+
+            (repo / "session.json").write_text(
+                f'{{"expected_branch":"{actual_branch}"}}\n',
+                encoding="utf-8",
+            )
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - session.json\n"
+                "  - policy.yaml\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn(f"expected: {actual_branch}", output)
+            self.assertIn(f"actual: {actual_branch}", output)
+            self.assertIn("mismatch reasons:\n  (none)", output)
+            self.assertIn("unauthorized files:\n  (none)", output)
+            self.assertIn(
+                f"verification: {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
 
 
 if __name__ == "__main__":
