@@ -47,6 +47,11 @@ with a required `allowed_paths` list:
 allowed_paths:
   - README.md
   - src
+protected_paths:
+  - ".github/workflows/**"
+  - "deploy/**"
+  - "infra/**"
+  - ".env"
 ```
 
 Each allowed path matches the exact file or any child path below it. The
@@ -56,6 +61,22 @@ terminal output with colored pass/fail status, expected versus actual branch,
 explicit mismatch reasons, and unauthorized files. When `--report` is provided,
 the CLI writes a markdown audit report containing a UTC timestamp, repo, branch,
 changed files, allowed files, violations, and git status summary.
+
+Protected paths are evaluated against the staged diff from `git diff --cached
+--name-only`. In advisory mode, staged protected path changes produce a warning
+without failing verification:
+
+```sh
+python3 verify_cli.py --session session.json --policy policy.yaml --protected-mode advisory
+```
+
+In enforce mode, staged protected path changes fail verification:
+
+```sh
+python3 verify_cli.py --session session.json --policy policy.yaml --protected-mode enforce
+```
+
+Protected path violations are included in markdown audit reports.
 
 When `.contextos/session_context.json` exists, the verification CLI also checks
 that the current branch and Git HEAD still match the ingested context, and that
@@ -81,5 +102,5 @@ Enable the tracked pre-commit hook to run verification before each commit:
 git config core.hooksPath .githooks
 ```
 
-The hook executes `python3 verify_cli.py --session session.json --policy
-policy.yaml --repo <repo-root>` and aborts the commit when verification fails.
+The hook executes `verify_cli.py` with `--protected-mode enforce` and aborts the
+commit when verification fails.

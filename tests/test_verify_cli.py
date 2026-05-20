@@ -94,12 +94,19 @@ class PolicyParsingTests(unittest.TestCase):
 allowed_paths:
   - src
   - "docs/guides" # inline comment
+protected_paths:
+  - ".github/workflows/**"
+  - deploy/**
 metadata:
   owner: tests
 """
         )
 
         self.assertEqual(policy.allowed_paths, ("src", "docs/guides"))
+        self.assertEqual(
+            policy.protected_paths,
+            (".github/workflows/**", "deploy/**"),
+        )
 
     def test_rejects_empty_allowed_paths(self) -> None:
         with self.assertRaisesRegex(verify_cli.VerificationError, "cannot be empty"):
@@ -115,6 +122,23 @@ class PathMatchingTests(unittest.TestCase):
         self.assertTrue(verify_cli.is_allowed("README.md", allowed_paths))
         self.assertFalse(verify_cli.is_allowed("src-other/app.py", allowed_paths))
         self.assertFalse(verify_cli.is_allowed("README.md.bak", allowed_paths))
+
+    def test_protected_path_patterns_match_staged_paths(self) -> None:
+        violations = verify_cli.protected_path_violations(
+            [".env", ".github/workflows/build.yml", "src/app.py"],
+            [".github/workflows/**", "deploy/**", ".env"],
+        )
+
+        self.assertEqual(
+            verify_cli.render_protected_violations(violations),
+            [
+                "protected path violation: .env matches .env",
+                (
+                    "protected path violation: .github/workflows/build.yml "
+                    "matches .github/workflows/**"
+                ),
+            ],
+        )
 
 
 class AuditReportTests(unittest.TestCase):
@@ -215,6 +239,105 @@ class PreCommitHookTests(unittest.TestCase):
 
 
 class VerifyCliIntegrationTests(unittest.TestCase):
+    def test_warns_for_protected_staged_paths_in_advisory_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - .env\n"
+                "  - policy.yaml\n"
+                "  - session.json\n"
+                "protected_paths:\n"
+                "  - .env\n",
+                encoding="utf-8",
+            )
+            (repo / ".env").write_text("TOKEN=test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            report_path = repo / "audit.md"
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("protected paths:", output)
+            self.assertIn(
+                f"protected paths: {verify_cli.RED}WARNING{verify_cli.RESET}",
+                output,
+            )
+            self.assertIn("protected mode: advisory", output)
+            self.assertIn("protected path violation: .env matches .env", output)
+            self.assertIn(
+                f"verification: {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
+
+            report = report_path.read_text(encoding="utf-8")
+            self.assertIn("## Protected Path Violations", report)
+            self.assertIn("- protected path violation: .env matches .env", report)
+
+    def test_blocks_protected_staged_paths_in_enforce_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - deploy/app.yml\n"
+                "  - policy.yaml\n"
+                "  - session.json\n"
+                "protected_paths:\n"
+                "  - deploy/**\n",
+                encoding="utf-8",
+            )
+            (repo / "deploy").mkdir()
+            (repo / "deploy" / "app.yml").write_text("image: app\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                        "--protected-mode",
+                        "enforce",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn(
+                f"protected paths: {verify_cli.RED}FAILED{verify_cli.RESET}",
+                output,
+            )
+            self.assertIn("protected mode: enforce", output)
+            self.assertIn(
+                "protected path violation: deploy/app.yml matches deploy/**",
+                output,
+            )
+            self.assertIn(f"verification: {verify_cli.RED}FAILED{verify_cli.RESET}", output)
+
     def test_fails_when_session_context_branch_and_head_are_stale(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
