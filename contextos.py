@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -56,6 +57,18 @@ class IssueFreshness:
     current_head_hash: str
     classification: str
     reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IssueMetadata:
+    repo: str
+    branch: str
+    expected_head: str
+    allowed_paths: tuple[str, ...]
+    protected_paths: tuple[str, ...]
+    execution_id: str
+    freshness_status: str
+    approval_status: str
 
 
 @dataclass(frozen=True)
@@ -141,6 +154,10 @@ ISSUE_PACKET_LIST_FIELDS = {
     "risks",
     "acceptance_criteria",
 }
+MANUAL_GITHUB_INSTRUCTIONS = (
+    "Manual GitHub step required: review the generated markdown, then post it "
+    "to GitHub using the GitHub web UI or an approved local gh command."
+)
 EXECUTION_SECTION_ALIASES = {
     "plan/task name": "plan_task_name",
     "plan task name": "plan_task_name",
@@ -717,6 +734,12 @@ def markdown_list(items: Sequence[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def yaml_list(items: Sequence[str]) -> str:
+    if not items:
+        return "[]"
+    return "\n".join(f"  - {item}" for item in items)
+
+
 def markdown_value(value: str) -> str:
     return value.strip() or "(not provided)"
 
@@ -754,10 +777,52 @@ def issue_freshness(packet: IssuePacket, repo: Path) -> IssueFreshness:
     )
 
 
+def issue_metadata_from_packet(
+    packet: IssuePacket,
+    freshness: IssueFreshness,
+    execution_id: str | None = None,
+    approval_status: str = "proposed",
+) -> IssueMetadata:
+    return IssueMetadata(
+        repo=packet.repo,
+        branch=packet.branch,
+        expected_head=freshness.current_head_hash,
+        allowed_paths=packet.allowed_paths,
+        protected_paths=packet.protected_paths,
+        execution_id=execution_id or audit_timestamp(),
+        freshness_status=freshness.classification,
+        approval_status=approval_status,
+    )
+
+
+def render_issue_metadata(metadata: IssueMetadata) -> str:
+    return "\n".join(
+        [
+            "```contextos-metadata",
+            f"repo: {metadata.repo}",
+            f"branch: {metadata.branch}",
+            f"expected_head: {metadata.expected_head}",
+            "allowed_paths:",
+            yaml_list(metadata.allowed_paths),
+            "protected_paths:",
+            yaml_list(metadata.protected_paths),
+            f"execution_id: {metadata.execution_id}",
+            f"freshness_status: {metadata.freshness_status}",
+            f"approval_status: {metadata.approval_status}",
+            "```",
+        ]
+    )
+
+
 def render_issue_markdown(packet: IssuePacket, freshness: IssueFreshness) -> str:
+    metadata = issue_metadata_from_packet(packet, freshness)
     return "\n".join(
         [
             f"# {packet.task}",
+            "",
+            "## ContextOS metadata",
+            "",
+            render_issue_metadata(metadata),
             "",
             "## Task summary",
             "",
@@ -842,6 +907,41 @@ def write_issue_audit_artifacts(
     return packet_snapshot, generated_issue
 
 
+def gh_executable() -> str | None:
+    return shutil.which("gh")
+
+
+def run_gh(args: Sequence[str], repo: Path) -> tuple[int, str, str]:
+    gh = gh_executable()
+    if gh is None:
+        return 127, "", "gh executable not found"
+    completed = subprocess.run(
+        [gh, *args],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
+
+
+def print_manual_issue_publish_instructions(markdown_path: Path) -> None:
+    print(MANUAL_GITHUB_INSTRUCTIONS)
+    print("Suggested manual publish path:")
+    print(f"  1. Open {markdown_path}")
+    print("  2. Create a new GitHub Issue")
+    print("  3. Paste the generated markdown as the issue body")
+
+
+def print_manual_issue_comment_instructions(markdown_path: Path, issue_number: int) -> None:
+    print(MANUAL_GITHUB_INSTRUCTIONS)
+    print("Suggested manual comment path:")
+    print(f"  1. Open {markdown_path}")
+    print(f"  2. Open GitHub Issue #{issue_number}")
+    print("  3. Paste the generated markdown as a comment")
+
+
 def create_issue(packet_path: Path, repo: Path, output_path: Path | None) -> int:
     root = repo_root(repo)
     if not packet_path.is_absolute():
@@ -868,6 +968,542 @@ def create_issue(packet_path: Path, repo: Path, output_path: Path | None) -> int
     print("Audit artifacts:")
     print(f"  issue packet: {packet_snapshot}")
     print(f"  generated issue: {generated_issue}")
+    return 0
+
+
+def issue_publish(
+    *,
+    packet_path: Path,
+    repo: Path,
+    output_path: Path | None,
+    create: bool,
+) -> int:
+    root = repo_root(repo)
+    if not packet_path.is_absolute():
+        packet_path = root / packet_path
+    packet = load_issue_packet(packet_path)
+    freshness = issue_freshness(packet, root)
+    issue_markdown = render_issue_markdown(packet, freshness)
+
+    if output_path is None:
+        output_path = root / ".contextos" / "audit" / "generated_issue.md"
+    elif not output_path.is_absolute():
+        output_path = root / output_path
+
+    packet_snapshot, generated_issue = write_issue_audit_artifacts(
+        repo=root,
+        packet_path=packet_path,
+        issue_markdown=issue_markdown,
+        output_path=output_path,
+    )
+
+    print(issue_markdown)
+    print("Generated issue markdown:")
+    print(f"  {output_path}")
+    print("Audit artifacts:")
+    print(f"  issue packet: {packet_snapshot}")
+    print(f"  generated issue: {generated_issue}")
+
+    if not create:
+        print("GitHub issue creation: not requested")
+        print_manual_issue_publish_instructions(output_path)
+        return 0
+    if gh_executable() is None:
+        print("GitHub issue creation: skipped because gh is unavailable")
+        print_manual_issue_publish_instructions(output_path)
+        return 0
+
+    exit_code, stdout, stderr = run_gh(
+        ["issue", "create", "--title", packet.task, "--body-file", str(output_path)],
+        root,
+    )
+    if exit_code != 0:
+        print("GitHub issue creation: failed")
+        print(stderr or "no error output")
+        print_manual_issue_publish_instructions(output_path)
+        return 1
+
+    print("GitHub issue creation: created")
+    if stdout:
+        print(stdout)
+    return 0
+
+
+def verification_status_for_report(repo: Path) -> str:
+    session_path = repo / "session.json"
+    policy_path = repo / "policy.yaml"
+    verify_path = repo / "verify_cli.py"
+    if not session_path.exists() or not policy_path.exists() or not verify_path.exists():
+        return "Not run: session.json, policy.yaml, or verify_cli.py is missing."
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(verify_path),
+            "--session",
+            str(session_path),
+            "--policy",
+            str(policy_path),
+            "--repo",
+            str(repo),
+            "--protected-mode",
+            "enforce",
+        ],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    status = "PASS" if completed.returncode == 0 else f"FAIL (exit {completed.returncode})"
+    output = (completed.stdout or completed.stderr).strip()
+    return f"{status}\n\n```text\n{output}\n```"
+
+
+def freshness_status_for_report(repo: Path) -> str:
+    try:
+        plan_path = find_latest_execution_plan(repo)
+    except ContextOSError as error:
+        return f"Not available: {error}"
+
+    plan = parse_execution_plan(plan_path)
+    state = repo_state(repo)
+    result = evaluate_execution_freshness(
+        plan=plan,
+        state=state,
+        freshness_threshold_hours=24,
+    )
+    return "\n".join(
+        [
+            f"- Classification: {result.classification}",
+            f"- Re-planning recommended: {'yes' if result.replan_recommended else 'no'}",
+            f"- Execution blocked: {'yes' if result.execution_blocked else 'no'}",
+            "",
+            "### Mismatch sources",
+            markdown_list(result.mismatch_sources),
+        ]
+    )
+
+
+def render_issue_execution_report(
+    *,
+    repo: Path,
+    tests_run: Sequence[str],
+    unresolved_risks: Sequence[str],
+    recommended_next_action: str,
+    recommended_git_commands: Sequence[str],
+) -> str:
+    state = repo_state(repo)
+    metadata = IssueMetadata(
+        repo=repo.name,
+        branch=state.current_branch,
+        expected_head=state.current_head,
+        allowed_paths=(),
+        protected_paths=(),
+        execution_id=audit_timestamp(),
+        freshness_status="report",
+        approval_status="review-required",
+    )
+    return "\n".join(
+        [
+            "# Cursor execution report",
+            "",
+            "## ContextOS metadata",
+            "",
+            render_issue_metadata(metadata),
+            "",
+            "## Current repository state",
+            "",
+            f"- Current branch: {state.current_branch}",
+            f"- Current HEAD: {state.current_head}",
+            "",
+            "## Git status",
+            "```text",
+            git_status_summary(repo),
+            "```",
+            "",
+            "## Files changed",
+            markdown_list(changed_paths_for_state(state)),
+            "",
+            "## Verification status",
+            verification_status_for_report(repo),
+            "",
+            "## Freshness status",
+            freshness_status_for_report(repo),
+            "",
+            "## Tests run",
+            markdown_list(tests_run),
+            "",
+            "## Unresolved risks",
+            markdown_list(unresolved_risks),
+            "",
+            "## Recommended next action",
+            recommended_next_action,
+            "",
+            "## Recommended Git command explanations",
+            render_git_command_explanations(recommended_git_commands),
+            "",
+            "## Safety notes",
+            "- This report did not execute GitHub Issue content.",
+            "- This report did not commit, push, deploy, or switch branches.",
+            "- Human review is required before converting issue content into session context.",
+            "",
+        ]
+    )
+
+
+def write_issue_report_artifacts(
+    *,
+    repo: Path,
+    report_markdown: str,
+    output_path: Path | None,
+) -> tuple[Path, Path]:
+    audit_dir = repo / ".contextos" / "audit" / "cursor_responses"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    if output_path is None:
+        output_path = audit_dir / "generated_issue_report.md"
+    elif not output_path.is_absolute():
+        output_path = repo / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_dir / f"{audit_timestamp()}_issue_report.md"
+    output_path.write_text(report_markdown, encoding="utf-8")
+    audit_path.write_text(report_markdown, encoding="utf-8")
+    return output_path, audit_path
+
+
+def issue_report(
+    *,
+    repo: Path,
+    issue_number: int | None,
+    output_path: Path | None,
+    post: bool,
+    tests_run: Sequence[str],
+    unresolved_risks: Sequence[str],
+    recommended_next_action: str,
+    recommended_git_commands: Sequence[str],
+) -> int:
+    root = repo_root(repo)
+    report = render_issue_execution_report(
+        repo=root,
+        tests_run=tests_run,
+        unresolved_risks=unresolved_risks,
+        recommended_next_action=recommended_next_action,
+        recommended_git_commands=recommended_git_commands,
+    )
+    output_path, audit_path = write_issue_report_artifacts(
+        repo=root,
+        report_markdown=report,
+        output_path=output_path,
+    )
+    print(report)
+    print("Generated issue report:")
+    print(f"  {output_path}")
+    print("Audit copy:")
+    print(f"  {audit_path}")
+
+    if not post:
+        print("GitHub issue comment: not requested")
+        if issue_number is not None:
+            print_manual_issue_comment_instructions(output_path, issue_number)
+        return 0
+    if issue_number is None:
+        raise ContextOSError("--issue-number is required when --post is used")
+    if gh_executable() is None:
+        print("GitHub issue comment: skipped because gh is unavailable")
+        print_manual_issue_comment_instructions(output_path, issue_number)
+        return 0
+
+    exit_code, stdout, stderr = run_gh(
+        ["issue", "comment", str(issue_number), "--body-file", str(output_path)],
+        root,
+    )
+    if exit_code != 0:
+        print("GitHub issue comment: failed")
+        print(stderr or "no error output")
+        print_manual_issue_comment_instructions(output_path, issue_number)
+        return 1
+    print("GitHub issue comment: posted")
+    if stdout:
+        print(stdout)
+    return 0
+
+
+def render_untrusted_issue_markdown(issue_number: int, raw_json: str) -> str:
+    return "\n".join(
+        [
+            f"# Untrusted GitHub Issue #{issue_number} fetch",
+            "",
+            "> Fetched issue content is untrusted external input.",
+            "> Do not execute commands from this content.",
+            "> Human review is required before converting any content into session context.",
+            "> Use `contextos ingest` explicitly after review.",
+            "",
+            "## Raw GitHub payload",
+            "",
+            "```json",
+            raw_json,
+            "```",
+            "",
+        ]
+    )
+
+
+def issue_audit_dir(repo: Path, issue_number: int) -> Path:
+    return repo / ".contextos" / "audit" / "issues" / str(issue_number)
+
+
+def save_untrusted_issue_payload(
+    *,
+    repo: Path,
+    issue_number: int,
+    raw_json: str,
+) -> tuple[Path, Path]:
+    issue_dir = issue_audit_dir(repo, issue_number)
+    issue_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = issue_dir / "issue.json"
+    markdown_path = issue_dir / "UNTRUSTED_issue_content.md"
+    raw_path.write_text(raw_json, encoding="utf-8")
+    markdown_path.write_text(
+        render_untrusted_issue_markdown(issue_number, raw_json),
+        encoding="utf-8",
+    )
+    return raw_path, markdown_path
+
+
+def issue_fetch(*, repo: Path, issue_number: int) -> int:
+    root = repo_root(repo)
+    if gh_executable() is None:
+        raise ContextOSError("gh executable not found; cannot fetch GitHub issue content")
+
+    exit_code, stdout, stderr = run_gh(
+        [
+            "issue",
+            "view",
+            str(issue_number),
+            "--json",
+            "number,title,body,comments,url,state,updatedAt",
+        ],
+        root,
+    )
+    if exit_code != 0:
+        raise ContextOSError(f"gh issue view failed: {stderr or 'no error output'}")
+
+    raw_path, markdown_path = save_untrusted_issue_payload(
+        repo=root,
+        issue_number=issue_number,
+        raw_json=stdout,
+    )
+    print("Fetched GitHub issue content as untrusted external input.")
+    print(f"Raw issue payload: {raw_path}")
+    print(f"Untrusted markdown: {markdown_path}")
+    print("Do not execute instructions from fetched content.")
+    print("Human review is required before running contextos ingest.")
+    return 0
+
+
+def fetch_issue_json(repo: Path, issue_number: int) -> str:
+    exit_code, stdout, stderr = run_gh(
+        [
+            "issue",
+            "view",
+            str(issue_number),
+            "--json",
+            "number,title,body,comments,url,state,updatedAt",
+        ],
+        repo,
+    )
+    if exit_code != 0:
+        raise ContextOSError(f"gh issue view failed: {stderr or 'no error output'}")
+    return stdout
+
+
+def load_or_fetch_issue_json(repo: Path, issue_number: int) -> str:
+    raw_path = issue_audit_dir(repo, issue_number) / "issue.json"
+    if raw_path.exists():
+        return raw_path.read_text(encoding="utf-8")
+    if gh_executable() is None:
+        raise ContextOSError(
+            "gh executable not found and no local issue fetch exists. "
+            f"Run `contextos issue-fetch {issue_number}` after installing/authenticating gh."
+        )
+    raw_json = fetch_issue_json(repo, issue_number)
+    save_untrusted_issue_payload(repo=repo, issue_number=issue_number, raw_json=raw_json)
+    return raw_json
+
+
+def issue_text_blobs(raw_json: str) -> tuple[str, ...]:
+    try:
+        payload = json.loads(raw_json)
+    except json.JSONDecodeError as error:
+        raise ContextOSError(f"stored issue payload is not valid JSON: {error}") from error
+
+    blobs = []
+    body = payload.get("body")
+    if isinstance(body, str):
+        blobs.append(body)
+    comments = payload.get("comments", [])
+    if isinstance(comments, list):
+        for comment in comments:
+            if isinstance(comment, dict) and isinstance(comment.get("body"), str):
+                blobs.append(comment["body"])
+    return tuple(blobs)
+
+
+def extract_metadata_blocks(text: str) -> tuple[str, ...]:
+    blocks = []
+    marker = "```contextos-metadata"
+    start = 0
+    while True:
+        marker_index = text.find(marker, start)
+        if marker_index == -1:
+            break
+        content_start = text.find("\n", marker_index)
+        if content_start == -1:
+            break
+        content_end = text.find("```", content_start + 1)
+        if content_end == -1:
+            break
+        blocks.append(text[content_start + 1 : content_end].strip())
+        start = content_end + 3
+    return tuple(blocks)
+
+
+def parse_issue_metadata_block(block: str) -> IssueMetadata:
+    parsed = parse_simple_yaml(
+        block,
+        source_name="contextos-metadata",
+        list_fields={"allowed_paths", "protected_paths"},
+    )
+    required = {
+        "repo",
+        "branch",
+        "expected_head",
+        "allowed_paths",
+        "protected_paths",
+        "execution_id",
+        "freshness_status",
+        "approval_status",
+    }
+    missing = sorted(required.difference(parsed))
+    if missing:
+        raise ContextOSError(
+            "contextos metadata missing required fields: " + ", ".join(missing)
+        )
+    return IssueMetadata(
+        repo=require_scalar(parsed, "repo", "contextos metadata"),
+        branch=require_scalar(parsed, "branch", "contextos metadata"),
+        expected_head=require_scalar(parsed, "expected_head", "contextos metadata"),
+        allowed_paths=require_string_list(
+            parsed,
+            "allowed_paths",
+            "contextos metadata",
+            normalize_paths=True,
+        ),
+        protected_paths=require_string_list(
+            parsed,
+            "protected_paths",
+            "contextos metadata",
+            normalize_paths=True,
+        ),
+        execution_id=require_scalar(parsed, "execution_id", "contextos metadata"),
+        freshness_status=require_scalar(parsed, "freshness_status", "contextos metadata"),
+        approval_status=require_scalar(parsed, "approval_status", "contextos metadata"),
+    )
+
+
+def latest_issue_metadata(raw_json: str) -> IssueMetadata:
+    blocks = []
+    for blob in issue_text_blobs(raw_json):
+        blocks.extend(extract_metadata_blocks(blob))
+    if not blocks:
+        raise ContextOSError("no contextos-metadata block found in issue content")
+    return parse_issue_metadata_block(blocks[-1])
+
+
+def ingest_issue(*, repo: Path, issue_number: int, confirm_reviewed: bool) -> int:
+    root = repo_root(repo)
+    raw_json = load_or_fetch_issue_json(root, issue_number)
+    save_untrusted_issue_payload(repo=root, issue_number=issue_number, raw_json=raw_json)
+    if not confirm_reviewed:
+        raise ContextOSError(
+            "Issue content is untrusted external input. Re-run with "
+            "--confirm-reviewed after human review to write session context."
+        )
+    metadata = latest_issue_metadata(raw_json)
+    if metadata.approval_status != "approved":
+        raise ContextOSError(
+            f"issue approval_status is {metadata.approval_status}; expected approved"
+        )
+    session_context = {
+        "allowed_paths": list(metadata.allowed_paths),
+        "branch": metadata.branch,
+        "git_head_hash": metadata.expected_head,
+        "project": metadata.repo,
+        "repo": metadata.repo,
+        "repo_root": str(root),
+        "source": "github_issue",
+        "task": f"GitHub Issue #{issue_number}",
+        "timestamp": utc_timestamp(),
+        "execution_id": metadata.execution_id,
+        "freshness_status": metadata.freshness_status,
+        "approval_status": metadata.approval_status,
+    }
+    output_path = root / ".contextos" / "session_context.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(session_context, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Ingested reviewed GitHub Issue #{issue_number} metadata.")
+    print(f"session context: {output_path}")
+    print("Fetched issue content remains untrusted; only reviewed metadata was ingested.")
+    return 0
+
+
+def latest_report_path(repo: Path) -> Path | None:
+    candidates = [
+        repo / ".contextos" / "freshness_report.md",
+        repo / ".contextos" / "state_switch_report.md",
+        repo / ".contextos" / "audit" / "generated_issue.md",
+        *sorted((repo / ".contextos" / "audit" / "cursor_responses").glob("*.md")),
+        *sorted((repo / ".contextos" / "audit" / "verification_reports").glob("*.md")),
+        *sorted((repo / ".contextos" / "audit" / "freshness_reports").glob("*.md")),
+    ]
+    return latest_path(candidates)
+
+
+def issue_status(*, repo: Path, issue_number: int) -> int:
+    root = repo_root(repo)
+    raw_path = issue_audit_dir(root, issue_number) / "issue.json"
+    metadata_status = "not available"
+    approval_state = "not available"
+    unresolved_blockers = []
+    if raw_path.exists():
+        try:
+            metadata = latest_issue_metadata(raw_path.read_text(encoding="utf-8"))
+            metadata_status = metadata.freshness_status
+            approval_state = metadata.approval_status
+            if approval_state != "approved":
+                unresolved_blockers.append(
+                    f"approval status is {approval_state}; human approval required"
+                )
+        except ContextOSError as error:
+            unresolved_blockers.append(str(error))
+
+    latest_report = latest_report_path(root)
+    state = repo_state(root)
+    print("# ContextOS issue status")
+    print()
+    print(f"- Issue: #{issue_number}")
+    print(f"- Current branch: {state.current_branch}")
+    print(f"- Current HEAD: {state.current_head}")
+    print(f"- Freshness: {metadata_status}")
+    print(f"- Verification: see latest report" if latest_report else "- Verification: not available")
+    print(f"- Latest report: {latest_report if latest_report else '(none)'}")
+    print(f"- Approval state: {approval_state}")
+    print()
+    print("## Unresolved blockers")
+    print(markdown_list(tuple(unresolved_blockers)))
     return 0
 
 
@@ -1738,6 +2374,76 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="path for generated issue markdown (default: .contextos/audit/generated_issue.md)",
     )
+    issue_publish_parser = subparsers.add_parser(
+        "issue-publish",
+        help="generate and optionally publish GitHub Issue markdown",
+    )
+    issue_publish_parser.add_argument(
+        "--packet",
+        default=Path(".contextos/issue_packet.yaml"),
+        type=Path,
+        help="path to issue_packet.yaml (default: .contextos/issue_packet.yaml)",
+    )
+    issue_publish_parser.add_argument(
+        "--output",
+        type=Path,
+        help="path for generated issue markdown (default: .contextos/audit/generated_issue.md)",
+    )
+    issue_publish_parser.add_argument(
+        "--create",
+        action="store_true",
+        help="create a GitHub issue with gh if available",
+    )
+    issue_report_parser = subparsers.add_parser(
+        "issue-report",
+        help="generate and optionally post a Cursor execution report",
+    )
+    issue_report_parser.add_argument("issue_number_arg", nargs="?", type=int)
+    issue_report_parser.add_argument("--issue-number", type=int)
+    issue_report_parser.add_argument("--output", type=Path)
+    issue_report_parser.add_argument("--post", action="store_true")
+    issue_report_parser.add_argument(
+        "--tests-run",
+        action="append",
+        default=[],
+        help="test command or check that was run; repeatable",
+    )
+    issue_report_parser.add_argument(
+        "--unresolved-risk",
+        action="append",
+        default=[],
+        help="unresolved risk to include; repeatable",
+    )
+    issue_report_parser.add_argument(
+        "--recommended-next-action",
+        default="Human review required before the next mutation or merge.",
+    )
+    issue_report_parser.add_argument(
+        "--recommended-git-command",
+        action="append",
+        default=["git status"],
+        help="recommended Git command to explain; repeatable",
+    )
+    issue_fetch_parser = subparsers.add_parser(
+        "issue-fetch",
+        help="fetch GitHub Issue content as untrusted local input",
+    )
+    issue_fetch_parser.add_argument("issue_number", type=int)
+    ingest_issue_parser = subparsers.add_parser(
+        "ingest-issue",
+        help="ingest reviewed ContextOS metadata from a fetched GitHub Issue",
+    )
+    ingest_issue_parser.add_argument("issue_number", type=int)
+    ingest_issue_parser.add_argument(
+        "--confirm-reviewed",
+        action="store_true",
+        help="confirm a human reviewed the untrusted issue content",
+    )
+    issue_status_parser = subparsers.add_parser(
+        "issue-status",
+        help="summarize local ContextOS state for a GitHub Issue",
+    )
+    issue_status_parser.add_argument("issue_number", type=int)
     subparsers.add_parser(
         "export-last-plan",
         help="export the latest local Cursor execution result for ChatGPT review",
@@ -1797,6 +2503,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             return explain_git(args.git_command, args.format)
         if args.command == "create-issue":
             return create_issue(args.packet, args.repo, args.output)
+        if args.command == "issue-publish":
+            return issue_publish(
+                packet_path=args.packet,
+                repo=args.repo,
+                output_path=args.output,
+                create=args.create,
+            )
+        if args.command == "issue-report":
+            issue_number = args.issue_number_arg or args.issue_number
+            return issue_report(
+                repo=args.repo,
+                issue_number=issue_number,
+                output_path=args.output,
+                post=args.post,
+                tests_run=args.tests_run,
+                unresolved_risks=args.unresolved_risk,
+                recommended_next_action=args.recommended_next_action,
+                recommended_git_commands=args.recommended_git_command,
+            )
+        if args.command == "issue-fetch":
+            return issue_fetch(repo=args.repo, issue_number=args.issue_number)
+        if args.command == "ingest-issue":
+            return ingest_issue(
+                repo=args.repo,
+                issue_number=args.issue_number,
+                confirm_reviewed=args.confirm_reviewed,
+            )
+        if args.command == "issue-status":
+            return issue_status(repo=args.repo, issue_number=args.issue_number)
         if args.command == "export-last-plan":
             return export_last_plan(args.repo)
         if args.command == "request-switch":

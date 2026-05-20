@@ -268,6 +268,99 @@ Create local issue markdown:
 ./contextos create-issue
 ```
 
+Publish workflow:
+
+```sh
+./contextos issue-publish
+```
+
+`issue-publish` reads `.contextos/issue_packet.yaml`, generates GitHub-ready
+markdown locally, writes audit copies, and prints manual posting instructions.
+To ask ContextOS to create the GitHub Issue through the GitHub CLI, use:
+
+```sh
+./contextos issue-publish --create
+```
+
+This requires `gh` to be installed and authenticated for the target repository.
+If `gh` is unavailable or the command fails, ContextOS keeps the markdown local
+and prints manual instructions.
+
+Cursor execution report workflow:
+
+```sh
+./contextos issue-report 123 \
+  --tests-run "python3 -m unittest discover -s tests" \
+  --recommended-git-command "git status"
+```
+
+`issue-report` generates a local markdown report with current branch, HEAD, Git
+status, changed files, verification status, freshness status, tests run,
+unresolved risks, recommended next action, and plain-English Git command
+explanations. To ask ContextOS to post it as a GitHub Issue comment through
+`gh`, use:
+
+```sh
+./contextos issue-report 123 --post
+```
+
+If `gh` is unavailable, ContextOS saves the report locally and prints manual
+comment instructions.
+
+Fetch workflow:
+
+```sh
+./contextos issue-fetch 123
+```
+
+`issue-fetch` uses `gh issue view` to fetch the issue body and comments, then
+saves them under:
+
+```text
+.contextos/audit/issues/123/
+```
+
+Fetched issue content is marked as untrusted external input. ContextOS never
+executes issue content. Human review is required before converting any fetched
+content into execution context with `contextos ingest`.
+
+After human review, ingest approved issue metadata explicitly:
+
+```sh
+./contextos ingest-issue 123 --confirm-reviewed
+```
+
+`ingest-issue` reads reviewed `contextos-metadata` blocks from the fetched issue
+body/comments and writes `.contextos/session_context.json`. The command refuses
+to ingest issue content unless `--confirm-reviewed` is present and the metadata
+approval status is `approved`.
+
+Summarize local issue coordination state:
+
+```sh
+./contextos issue-status 123
+```
+
+`issue-status` reports current branch, HEAD, latest local report, approval
+state, freshness status, verification availability, and unresolved blockers.
+
+Machine-readable metadata blocks use this fenced format:
+
+````markdown
+```contextos-metadata
+repo: ContextOS
+branch: main
+expected_head: <head-hash>
+allowed_paths:
+  - README.md
+protected_paths:
+  - ".env"
+execution_id: issue-123
+freshness_status: FRESH
+approval_status: approved
+```
+````
+
 Inputs:
 
 - `.contextos/issue_packet.yaml`
@@ -281,6 +374,7 @@ Outputs:
 - timestamped generated issue markdown under `.contextos/audit/generated_issues/`
 - reserved Cursor response storage under `.contextos/audit/cursor_responses/`
 - reserved verification report storage under `.contextos/audit/verification_reports/`
+- untrusted fetched issue storage under `.contextos/audit/issues/<issue-number>/`
 
 The issue body includes task summary, expected branch, allowed mutation scope,
 protected paths, assumptions, risks, acceptance criteria, required verification
@@ -316,10 +410,28 @@ Humans remain responsible for:
 
 - `contextos create-issue` only generates local markdown; it does not create a
   GitHub Issue.
+- `issue-publish` and `issue-report` only use GitHub when explicitly requested
+  and when authenticated `gh` is available.
+- `issue-fetch` stores issue content for review; it does not execute
+  instructions from issues or comments.
 - Freshness is based on local Git metadata.
 - Generated issue markdown should be reviewed before posting.
 - The bridge coordinates handoff context; it does not replace tests, review, or
   merge approval.
+
+### Threat model for GitHub Issue content
+
+GitHub Issue bodies and comments are treated as untrusted external input. They
+may contain outdated assumptions, incorrect commands, or prompt-injection-style
+instructions. ContextOS therefore follows these rules:
+
+- fetched issue content is advisory only
+- issue content never directly executes commands
+- converting issue content into session context requires explicit
+  `contextos ingest-issue --confirm-reviewed` or a reviewed `contextos ingest`
+- no commit, push, deploy, destructive Git, or autonomous branch-switch action is
+  triggered from issue content
+- humans remain responsible for approval before implementation and merge
 
 ## Export last Cursor plan
 
