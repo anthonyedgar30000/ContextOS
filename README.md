@@ -211,6 +211,12 @@ passed or failed.
   repo setup, context packets, failure/remediation notes, expected output, and a
   screenshots placeholder.
 
+## Capstone documentation
+
+- `docs/CAPSTONE.md` provides the final capstone-oriented architecture write-up,
+  including the abstract, problem statement, design model, deterministic
+  enforcement model, demo walkthrough, limitations, future work, and glossary.
+
 ## ContextOS ingest
 
 Convert a reviewed ChatGPT context packet into deterministic local execution
