@@ -1,0 +1,167 @@
+Note: ANSI color escape codes are omitted for readability.
+
+== Reset demo workspace ==
+
+== Create local JillyPickles repository ==
++ git init -b main /tmp/contextos-jillypickles-demo/JillyPickles
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles config user.email demo@jillypickles.example
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles config user.name JillyPickles Demo
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles add .
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles commit -m Initialize JillyPickles demo app
+
+== 1. Start on BranchA ==
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles checkout -b feature/clientA
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles add docs/clientA.md
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles commit -m Update Client A pickle recommendations
+
+== 2. Generate/update context packet ==
++ /tmp/contextos-jillypickles-demo/JillyPickles/contextos --repo /tmp/contextos-jillypickles-demo/JillyPickles ingest /tmp/contextos-jillypickles-demo/JillyPickles/context_packet.yaml
+contextos ingest
+packet: /tmp/contextos-jillypickles-demo/JillyPickles/context_packet.yaml
+repo: JillyPickles
+branch: feature/clientA
+allowed paths:
+  context_packet.yaml
+  docs/clientA.md
+  src/jillypickles/recommendations.py
+  policy.yaml
+  session.json
+session context: /tmp/contextos-jillypickles-demo/JillyPickles/.contextos/session_context.json
+contextos ingest: PASSED
+
+== Install ContextOS pre-commit hook ==
++ python3 /tmp/contextos-jillypickles-demo/JillyPickles/install_hooks.py --repo /tmp/contextos-jillypickles-demo/JillyPickles --mode enforce
+ContextOS hook installer
+repo: /tmp/contextos-jillypickles-demo/JillyPickles
+hook: /tmp/contextos-jillypickles-demo/JillyPickles/.git/hooks/pre-commit
+mode: enforce
+status: installed
+
+== 3. Switch locally to BranchB ==
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles checkout main
+
+== 4-5. Simulate stale AI assumptions and attempt unauthorized mutation ==
++ git -C /tmp/contextos-jillypickles-demo/JillyPickles add deploy/production.yml
+
+== 6-7. ContextOS detects mismatch and verification fails before commit/push ==
+session: /tmp/contextos-jillypickles-demo/JillyPickles/session.json
+policy: /tmp/contextos-jillypickles-demo/JillyPickles/policy.yaml
+repo: /tmp/contextos-jillypickles-demo/JillyPickles
+session context: /tmp/contextos-jillypickles-demo/JillyPickles/.contextos/session_context.json
+branch:
+  expected: (not specified)
+  actual: main
+allowed paths:
+  .gitignore
+  context_packet.yaml
+  docs/clientA.md
+  src/jillypickles/recommendations.py
+  policy.yaml
+  session.json
+  .contextos/session_context.json
+  contextos
+  contextos.py
+  git_command_explanations.py
+  install_hooks.py
+  verify_cli.py
+protected paths:
+  .github/workflows/**
+  deploy/**
+  infra/**
+  .env
+$ git status --porcelain=v1 -z:
+  ?? .contextos/
+  ?? context_packet.yaml
+  M  deploy/production.yml
+$ git diff --name-only:
+  (none)
+$ git diff --cached --name-only:
+  deploy/production.yml
+
+protected paths: FAILED
+protected mode: enforce
+protected path violations:
+  protected path violation: deploy/production.yml matches deploy/**
+audit report: /tmp/contextos-jillypickles-demo/JillyPickles/audit.md
+
+CONTEXT STALE
+Reason:
+
+- session created on feature/clientA
+- current branch is main
+- HEAD changed after ingestion
+
+Suggested remediation:
+
+1. regenerate context packet
+2. run contextos ingest
+3. revalidate before commit
+
+verification exit code: 1
+
+== 8. Attempt commit and observe hook block ==
+ContextOS pre-commit: running verify_cli.py
+session: /tmp/contextos-jillypickles-demo/JillyPickles/session.json
+policy: /tmp/contextos-jillypickles-demo/JillyPickles/policy.yaml
+repo: /tmp/contextos-jillypickles-demo/JillyPickles
+session context: /tmp/contextos-jillypickles-demo/JillyPickles/.contextos/session_context.json
+branch:
+  expected: (not specified)
+  actual: main
+allowed paths:
+  .gitignore
+  context_packet.yaml
+  docs/clientA.md
+  src/jillypickles/recommendations.py
+  policy.yaml
+  session.json
+  .contextos/session_context.json
+  contextos
+  contextos.py
+  git_command_explanations.py
+  install_hooks.py
+  verify_cli.py
+protected paths:
+  .github/workflows/**
+  deploy/**
+  infra/**
+  .env
+$ git status --porcelain=v1 -z:
+  ?? .contextos/
+  ?? audit.md
+  ?? context_packet.yaml
+  M  deploy/production.yml
+$ git diff --name-only:
+  (none)
+$ git diff --cached --name-only:
+  deploy/production.yml
+
+protected paths: FAILED
+protected mode: enforce
+protected path violations:
+  protected path violation: deploy/production.yml matches deploy/**
+
+CONTEXT STALE
+Reason:
+
+- session created on feature/clientA
+- current branch is main
+- HEAD changed after ingestion
+
+Suggested remediation:
+
+1. regenerate context packet
+2. run contextos ingest
+3. revalidate before commit
+ContextOS pre-commit: verification failed; commit blocked
+Suggested remediation:
+1. review the verification output above
+2. regenerate the context packet if context is stale
+3. run: ./contextos ingest context_packet.yaml
+4. adjust staged changes or policy before retrying
+
+commit exit code: 1
+
+== Demo result ==
+Commit/push should not proceed. Inspect generated repo at: /tmp/contextos-jillypickles-demo/JillyPickles
+Audit report: /tmp/contextos-jillypickles-demo/JillyPickles/audit.md

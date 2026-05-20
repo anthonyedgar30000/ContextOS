@@ -1,0 +1,10 @@
+project: JillyPickles
+repo: JillyPickles
+branch: feature/clientA
+task: Update Client A picnic pack copy without changing deploy or infra files
+allowed_paths:
+  - context_packet.yaml
+  - docs/clientA.md
+  - src/jillypickles/recommendations.py
+  - policy.yaml
+  - session.json
