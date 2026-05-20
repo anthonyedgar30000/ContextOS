@@ -8,6 +8,7 @@ __pycache__/
 .contextos/audit/issue_packets/*
 .contextos/audit/generated_issues/*
 .contextos/audit/cursor_responses/*
+.contextos/audit/issues/*
 .contextos/audit/verification_reports/*
 .contextos/audit/execution_results/*
 .contextos/audit/state_switches/*
@@ -15,6 +16,7 @@ __pycache__/
 !.contextos/audit/issue_packets/.gitkeep
 !.contextos/audit/generated_issues/.gitkeep
 !.contextos/audit/cursor_responses/.gitkeep
+!.contextos/audit/issues/.gitkeep
 !.contextos/audit/verification_reports/.gitkeep
 !.contextos/audit/execution_results/.gitkeep
 !.contextos/audit/state_switches/.gitkeep
