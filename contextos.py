@@ -19,6 +19,7 @@ from git_command_explanations import (
     render_markdown_explanation,
     render_terminal_explanation,
 )
+import verify_cli
 
 
 class ContextOSError(Exception):
@@ -671,6 +672,24 @@ def ingest(packet_path: Path, repo: Path) -> int:
     print(f"session context: {output_path}")
     print("contextos ingest: PASSED")
     return 0
+
+
+def verify(
+    session_path: Path,
+    policy_path: Path,
+    repo: Path,
+    report_path: Path | None,
+    session_context_path: Path | None,
+    protected_mode: str,
+) -> int:
+    return verify_cli.verify(
+        session_path=session_path,
+        policy_path=policy_path,
+        repo=repo,
+        report_path=report_path,
+        session_context_path=session_context_path,
+        protected_mode=protected_mode,
+    )
 
 
 def explain_git(command: Sequence[str], output_format: str) -> int:
@@ -1645,6 +1664,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="run deterministic ContextOS verification",
+    )
+    verify_parser.add_argument(
+        "--session",
+        default=Path("session.json"),
+        type=Path,
+        help="path to session.json (default: session.json)",
+    )
+    verify_parser.add_argument(
+        "--policy",
+        default=Path("policy.yaml"),
+        type=Path,
+        help="path to policy.yaml (default: policy.yaml)",
+    )
+    verify_parser.add_argument(
+        "--report",
+        type=Path,
+        help="write a markdown audit report to this path",
+    )
+    verify_parser.add_argument(
+        "--session-context",
+        type=Path,
+        help=(
+            "path to session_context.json "
+            "(default: <repo>/.contextos/session_context.json)"
+        ),
+    )
+    verify_parser.add_argument(
+        "--protected-mode",
+        choices=("advisory", "enforce"),
+        default="advisory",
+        help="warn or fail when staged changes touch protected paths",
+    )
     ingest_parser = subparsers.add_parser(
         "ingest",
         help="ingest a reviewed ChatGPT context packet",
@@ -1728,6 +1782,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "verify":
+            return verify(
+                session_path=args.session,
+                policy_path=args.policy,
+                repo=args.repo,
+                report_path=args.report,
+                session_context_path=args.session_context,
+                protected_mode=args.protected_mode,
+            )
         if args.command == "ingest":
             return ingest(args.context_packet, args.repo)
         if args.command == "explain-git":

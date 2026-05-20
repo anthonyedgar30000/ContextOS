@@ -218,6 +218,43 @@ class ContextosIngestTests(unittest.TestCase):
             self.assertFalse((repo / ".contextos" / "session_context.json").exists())
 
 
+class ContextosVerifyTests(unittest.TestCase):
+    def test_verify_wrapper_runs_verification_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            git_init(repo)
+            branch = git_current_branch(repo)
+            (repo / "session.json").write_text(
+                f'{{"expected_branch":"{branch}"}}\n',
+                encoding="utf-8",
+            )
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "verify",
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("CONTEXT FRESH", stdout.getvalue())
+            self.assertIn("verification:", stdout.getvalue())
+
+
 class ExplainGitTests(unittest.TestCase):
     def test_explain_git_renders_terminal_output(self) -> None:
         stdout = io.StringIO()

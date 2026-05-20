@@ -73,9 +73,16 @@ them against Git before commit or push.
 
 ## ContextOS design
 
-ContextOS is built around two command surfaces and a small set of local files.
+ContextOS is built around a local CLI command surface and a small set of local
+files.
 
 ### Command surfaces
+
+- `contextos verify`
+  - checks Git state, declared path scope, protected paths, and context
+    freshness before allowing work to proceed
+  - delegates to the deterministic verification implementation in
+    `verify_cli.py`
 
 - `contextos ingest <context_packet.yaml>`
   - reads reviewed context
@@ -83,13 +90,23 @@ ContextOS is built around two command surfaces and a small set of local files.
   - compares packet repo and branch against local Git state
   - writes `.contextos/session_context.json`
 
-- `verify_cli.py`
-  - reads `session.json`
-  - reads `policy.yaml`
-  - reads `.contextos/session_context.json` when present
-  - runs deterministic Git commands
-  - validates branch freshness, HEAD freshness, path scope, and protected paths
-  - writes an optional markdown audit report
+- `contextos verify-freshness`
+  - classifies whether an execution plan still matches current repository state
+
+- `contextos create-issue`
+  - generates local GitHub Issue markdown from `.contextos/issue_packet.yaml`
+  - does not call the GitHub API
+
+- `contextos export-last-plan`
+  - exports the latest local Cursor execution result for ChatGPT review
+  - does not call ChatGPT or Cursor APIs
+
+- `contextos request-switch`
+  - creates an approval-gated repository state switch request
+  - does not switch branches unless explicitly approved and validation passes
+
+- `contextos explain-git`
+  - explains recommended Git commands with risk and state-change metadata
 
 ### Local files
 

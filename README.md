@@ -5,6 +5,16 @@ AI-assisted development workflows. It turns reviewed context into local files,
 uses Git as the source of truth for current execution state, and blocks or
 reports mutations that no longer match the declared boundary.
 
+## Repository Status
+
+This branch is the canonical ContextOS capstone implementation branch. It
+supersedes the earlier verifier prototype direction in PR #2 and intentionally
+does not include the media-overlay prototype direction from PR #1. The project
+identity for this branch is:
+
+> A lightweight deterministic execution-boundary layer for AI-assisted
+> development workflows.
+
 ## Problem statement
 
 AI-assisted coding sessions often begin with a reviewed task, a target branch,
@@ -20,12 +30,23 @@ mutation inside a deterministic, locally verifiable boundary.
 
 ## Architecture overview
 
-ContextOS has two local command surfaces:
+ContextOS has local command surfaces for ingestion, verification, issue
+handoff, plan export, freshness checks, and approval-gated state-switch
+requests:
 
 - `contextos ingest <context_packet.yaml>` converts reviewed context into
   `.contextos/session_context.json`.
-- `verify_cli.py` checks Git state, declared path scope, protected paths, and
+- `contextos verify` checks Git state, declared path scope, protected paths, and
   context freshness before allowing work to proceed.
+- `contextos verify-freshness` classifies whether an execution plan still
+  matches current repository state.
+- `contextos create-issue` generates local GitHub Issue markdown from an issue
+  packet.
+- `contextos export-last-plan` exports the latest local Cursor execution result
+  for ChatGPT review.
+- `contextos request-switch` creates an approval-gated repo/branch switch
+  request.
+- `contextos explain-git` explains recommended Git commands.
 
 ```text
 Reviewed context packet
@@ -612,8 +633,11 @@ Supported risk classifications:
 Run the deterministic verification CLI from the repository root:
 
 ```sh
-python3 verify_cli.py --session session.json --policy policy.yaml --report audit.md
+./contextos verify --session session.json --policy policy.yaml --report audit.md
 ```
+
+`verify_cli.py` remains the underlying deterministic verifier used by
+`contextos verify`.
 
 `session.json` must be valid JSON. `policy.yaml` supports a minimal YAML subset
 with a required `allowed_paths` list:
