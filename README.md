@@ -300,6 +300,89 @@ Humans remain responsible for:
 - The bridge coordinates handoff context; it does not replace tests, review, or
   merge approval.
 
+## Export last Cursor plan
+
+Use `contextos export-last-plan` when ChatGPT needs a structured overview of the
+most recent Cursor-executed plan without reconstructing it manually:
+
+```sh
+./contextos export-last-plan
+```
+
+The command is read-only. It does not call ChatGPT APIs, Cursor APIs, GitHub
+APIs, push, commit, or mutate Git state.
+
+It looks for the most recent local execution result in:
+
+- `.contextos/execution_result.md`
+- `.contextos/audit/execution_results/*.md`
+- `.contextos/audit/verification_reports/*.md`
+
+If no execution result exists, the command fails clearly and explains where to
+write one.
+
+Sample execution result input:
+
+```markdown
+# Implement issue bridge
+
+## Original objective
+Generate local GitHub Issue markdown from an issue packet.
+
+## Implementation summary
+- Added `contextos create-issue`.
+
+## Files changed
+- contextos.py
+- tests/test_contextos.py
+
+## Tests run
+- python3 -m unittest discover -s tests
+
+## Test results
+PASS
+
+## Policy/verification result
+Verification passed locally.
+
+## Unresolved issues
+- None.
+
+## Recommended next action
+Review generated issue markdown before posting.
+
+## Recommended Git commands
+- git status
+
+## Human approval required
+Yes. Human review is required before posting or merging.
+```
+
+Sample export excerpt:
+
+````markdown
+# Last executed Cursor plan overview
+
+## Plan/task name
+Implement issue bridge
+
+## Git status summary
+```text
+## cursor/minimal-verification-cli-78c4...origin/cursor/minimal-verification-cli-78c4
+```
+
+## Recommended Git command explanations
+### `git status`
+
+- Explanation: Shows current repository state including modified files, staged files, untracked files, and branch status.
+- Risk: `READ_ONLY`
+- Potential consequences: No repository files, refs, or remotes are changed.
+- Changes state: no
+
+## Human approval required
+Yes. Human review is required before posting or merging.
+````
+
 ## ContextOS ingest
 
 Convert a reviewed ChatGPT context packet into deterministic local execution

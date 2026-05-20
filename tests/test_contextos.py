@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -373,6 +374,126 @@ class CreateIssueTests(unittest.TestCase):
             self.assertIn("- Freshness classification: STALE", output)
             self.assertIn("- issue packet expects branch feature/clientA", output)
             self.assertIn("- current branch is", output)
+
+
+class ExportLastPlanTests(unittest.TestCase):
+    def write_execution_result(self, path: Path, task_name: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"# {task_name}\n\n"
+            "## Original objective\n"
+            "Export the latest Cursor plan for ChatGPT review.\n\n"
+            "## Implementation summary\n"
+            "- Added a read-only export command.\n\n"
+            "## Files changed\n"
+            "- contextos.py\n"
+            "- tests/test_contextos.py\n\n"
+            "## Tests run\n"
+            "- python3 -m unittest discover -s tests\n\n"
+            "## Test results\n"
+            "PASS\n\n"
+            "## Policy/verification result\n"
+            "Verification passed locally.\n\n"
+            "## Unresolved issues\n"
+            "- None.\n\n"
+            "## Recommended next action\n"
+            "Review the generated summary before approving follow-up work.\n\n"
+            "## Recommended Git commands\n"
+            "- git status\n"
+            "- git push -u origin feature/export\n\n"
+            "## Human approval required\n"
+            "Yes. Human review is required before merge.\n",
+            encoding="utf-8",
+        )
+
+    def test_export_last_plan_uses_execution_result_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            self.write_execution_result(
+                repo / ".contextos" / "execution_result.md",
+                "Export latest plan",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "export-last-plan",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("# Last executed Cursor plan overview", output)
+            self.assertIn("## Plan/task name\nExport latest plan", output)
+            self.assertIn("## Original objective", output)
+            self.assertIn("## Files changed", output)
+            self.assertIn("## Git status summary", output)
+            self.assertIn("## Policy/verification result", output)
+            self.assertIn("## Recommended Git command explanations", output)
+            self.assertIn("### `git status`", output)
+            self.assertIn("Risk: `READ_ONLY`", output)
+            self.assertIn("### `git push -u origin <branch>`", output)
+            self.assertIn("Risk: `REMOTE_CHANGING`", output)
+            self.assertIn("## Human approval required\nYes.", output)
+            self.assertIn("No Git state was changed.", output)
+
+    def test_export_last_plan_fails_when_no_execution_result_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "export-last-plan",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("No execution result found", stderr.getvalue())
+            self.assertIn(".contextos/execution_result.md", stderr.getvalue())
+
+    def test_export_last_plan_chooses_most_recent_audit_execution_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            old_result = repo / ".contextos" / "execution_result.md"
+            new_result = (
+                repo
+                / ".contextos"
+                / "audit"
+                / "execution_results"
+                / "latest.md"
+            )
+            self.write_execution_result(old_result, "Old plan")
+            self.write_execution_result(new_result, "New plan")
+            os.utime(old_result, (1, 1))
+            os.utime(new_result, (2, 2))
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "export-last-plan",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("## Plan/task name\nNew plan", output)
+            self.assertNotIn("## Plan/task name\nOld plan", output)
 
 
 if __name__ == "__main__":

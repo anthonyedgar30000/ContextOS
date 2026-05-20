@@ -57,6 +57,22 @@ class IssueFreshness:
     reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ExecutionPlanOverview:
+    source_path: Path
+    plan_task_name: str
+    original_objective: str
+    implementation_summary: str
+    files_changed: str
+    tests_run: str
+    test_results: str
+    policy_verification_result: str
+    unresolved_issues: str
+    recommended_next_action: str
+    recommended_git_commands: tuple[str, ...]
+    human_approval_required: str
+
+
 REQUIRED_PACKET_FIELDS = ("project", "repo", "branch", "task", "allowed_paths")
 REQUIRED_ISSUE_PACKET_FIELDS = (
     "project",
@@ -76,6 +92,26 @@ ISSUE_PACKET_LIST_FIELDS = {
     "assumptions",
     "risks",
     "acceptance_criteria",
+}
+EXECUTION_SECTION_ALIASES = {
+    "plan/task name": "plan_task_name",
+    "plan task name": "plan_task_name",
+    "task": "plan_task_name",
+    "original objective": "original_objective",
+    "objective": "original_objective",
+    "implementation summary": "implementation_summary",
+    "files changed": "files_changed",
+    "tests run": "tests_run",
+    "test results": "test_results",
+    "policy/verification result": "policy_verification_result",
+    "policy verification result": "policy_verification_result",
+    "verification result": "policy_verification_result",
+    "unresolved issues": "unresolved_issues",
+    "recommended next action": "recommended_next_action",
+    "recommended git command": "recommended_git_commands",
+    "recommended git commands": "recommended_git_commands",
+    "recommended git actions": "recommended_git_commands",
+    "human approval required": "human_approval_required",
 }
 
 
@@ -587,6 +623,10 @@ def markdown_list(items: Sequence[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def markdown_value(value: str) -> str:
+    return value.strip() or "(not provided)"
+
+
 def issue_freshness(packet: IssuePacket, repo: Path) -> IssueFreshness:
     current = current_branch(repo)
     current_head = head_hash(repo)
@@ -737,6 +777,230 @@ def create_issue(packet_path: Path, repo: Path, output_path: Path | None) -> int
     return 0
 
 
+def latest_path(paths: Sequence[Path]) -> Path | None:
+    existing_paths = [path for path in paths if path.exists() and path.is_file()]
+    if not existing_paths:
+        return None
+    return sorted(
+        existing_paths,
+        key=lambda path: (path.stat().st_mtime_ns, str(path)),
+        reverse=True,
+    )[0]
+
+
+def execution_result_candidates(repo: Path) -> list[Path]:
+    audit_root = repo / ".contextos" / "audit"
+    return [
+        repo / ".contextos" / "execution_result.md",
+        *sorted((audit_root / "execution_results").glob("*.md")),
+        *sorted((audit_root / "verification_reports").glob("*.md")),
+    ]
+
+
+def find_latest_execution_result(repo: Path) -> Path:
+    latest = latest_path(execution_result_candidates(repo))
+    if latest is None:
+        raise ContextOSError(
+            "No execution result found. Create one by writing "
+            ".contextos/execution_result.md, saving a Cursor response to "
+            ".contextos/audit/execution_results/, or saving a verification "
+            "report to .contextos/audit/verification_reports/."
+        )
+    return latest
+
+
+def normalized_heading(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return None
+    heading = stripped.lstrip("#").strip()
+    return heading.lower() if heading else None
+
+
+def parse_markdown_sections(text: str) -> tuple[str | None, dict[str, str]]:
+    title: str | None = None
+    sections: dict[str, list[str]] = {}
+    current_key: str | None = None
+
+    for line in text.splitlines():
+        heading = normalized_heading(line)
+        if heading is not None:
+            if title is None and line.strip().startswith("# "):
+                title = line.strip().lstrip("#").strip()
+            current_key = EXECUTION_SECTION_ALIASES.get(heading)
+            if current_key is not None:
+                sections.setdefault(current_key, [])
+            continue
+
+        if current_key is not None:
+            sections[current_key].append(line)
+
+    return title, {
+        key: "\n".join(lines).strip()
+        for key, lines in sections.items()
+    }
+
+
+def strip_markdown_command(line: str) -> str:
+    stripped = line.strip()
+    if stripped.startswith("- "):
+        stripped = stripped[2:].strip()
+    if stripped.startswith("* "):
+        stripped = stripped[2:].strip()
+    return stripped.strip("`").strip()
+
+
+def extract_recommended_git_commands(section_text: str) -> tuple[str, ...]:
+    commands = []
+    in_code_block = False
+    for line in section_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        candidate = strip_markdown_command(line)
+        if candidate.startswith("git "):
+            commands.append(candidate)
+
+    return tuple(dict.fromkeys(commands))
+
+
+def parse_execution_plan_overview(path: Path) -> ExecutionPlanOverview:
+    text = path.read_text(encoding="utf-8")
+    title, sections = parse_markdown_sections(text)
+    git_command_section = sections.get("recommended_git_commands", "")
+
+    return ExecutionPlanOverview(
+        source_path=path,
+        plan_task_name=markdown_value(sections.get("plan_task_name", "") or title or ""),
+        original_objective=markdown_value(sections.get("original_objective", "")),
+        implementation_summary=markdown_value(sections.get("implementation_summary", "")),
+        files_changed=markdown_value(sections.get("files_changed", "")),
+        tests_run=markdown_value(sections.get("tests_run", "")),
+        test_results=markdown_value(sections.get("test_results", "")),
+        policy_verification_result=markdown_value(
+            sections.get("policy_verification_result", "")
+        ),
+        unresolved_issues=markdown_value(sections.get("unresolved_issues", "")),
+        recommended_next_action=markdown_value(
+            sections.get("recommended_next_action", "")
+        ),
+        recommended_git_commands=extract_recommended_git_commands(git_command_section),
+        human_approval_required=markdown_value(
+            sections.get("human_approval_required", "")
+        ),
+    )
+
+
+def render_git_command_explanations(commands: Sequence[str]) -> str:
+    if not commands:
+        return "- (none)"
+
+    rendered = []
+    for command in commands:
+        try:
+            explanation = explain_git_command(command)
+        except GitCommandExplanationError as error:
+            rendered.append(
+                "\n".join(
+                    [
+                        f"### `{command}`",
+                        "",
+                        f"- Explanation: {error}",
+                        "- Risk: (not available)",
+                        "- Potential consequences: (not available)",
+                        "- Changes state: (not available)",
+                    ]
+                )
+            )
+            continue
+
+        rendered.append(
+            "\n".join(
+                [
+                    f"### `{explanation.command}`",
+                    "",
+                    f"- Explanation: {explanation.explanation}",
+                    f"- Risk: `{explanation.risk}`",
+                    f"- Potential consequences: {explanation.consequences}",
+                    f"- Changes state: {'yes' if explanation.changes_state else 'no'}",
+                ]
+            )
+        )
+
+    return "\n\n".join(rendered)
+
+
+def git_status_summary(repo: Path) -> str:
+    status = run_git(["status", "--porcelain=v1", "-b"], repo)
+    return status or "## clean"
+
+
+def render_last_plan_report(overview: ExecutionPlanOverview, repo: Path) -> str:
+    return "\n".join(
+        [
+            "# Last executed Cursor plan overview",
+            "",
+            f"- Source: {overview.source_path}",
+            f"- Current branch: {current_branch(repo)}",
+            f"- Current HEAD hash: {head_hash(repo)}",
+            "",
+            "## Plan/task name",
+            overview.plan_task_name,
+            "",
+            "## Original objective",
+            overview.original_objective,
+            "",
+            "## Implementation summary",
+            overview.implementation_summary,
+            "",
+            "## Files changed",
+            overview.files_changed,
+            "",
+            "## Tests run",
+            overview.tests_run,
+            "",
+            "## Test results",
+            overview.test_results,
+            "",
+            "## Git status summary",
+            "```text",
+            git_status_summary(repo),
+            "```",
+            "",
+            "## Policy/verification result",
+            overview.policy_verification_result,
+            "",
+            "## Unresolved issues",
+            overview.unresolved_issues,
+            "",
+            "## Recommended next action",
+            overview.recommended_next_action,
+            "",
+            "## Recommended Git command explanations",
+            render_git_command_explanations(overview.recommended_git_commands),
+            "",
+            "## Human approval required",
+            overview.human_approval_required,
+            "",
+            "## Export constraints",
+            "- No ChatGPT API call was made.",
+            "- No Cursor API call was made.",
+            "- No Git state was changed.",
+            "- This report was generated from local files and local Git state.",
+            "",
+        ]
+    )
+
+
+def export_last_plan(repo: Path) -> int:
+    root = repo_root(repo)
+    source_path = find_latest_execution_result(root)
+    overview = parse_execution_plan_overview(source_path)
+    print(render_last_plan_report(overview, root))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="contextos",
@@ -789,6 +1053,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="path for generated issue markdown (default: .contextos/audit/generated_issue.md)",
     )
+    subparsers.add_parser(
+        "export-last-plan",
+        help="export the latest local Cursor execution result for ChatGPT review",
+    )
 
     return parser
 
@@ -804,6 +1072,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return explain_git(args.git_command, args.format)
         if args.command == "create-issue":
             return create_issue(args.packet, args.repo, args.output)
+        if args.command == "export-last-plan":
+            return export_last_plan(args.repo)
     except ContextOSError as error:
         print(f"contextos: ERROR: {error}", file=sys.stderr)
         return 2
