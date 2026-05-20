@@ -1,5 +1,200 @@
 # ContextOS
 
+ContextOS is a lightweight deterministic execution-boundary layer for
+AI-assisted development workflows. It turns reviewed context into local files,
+uses Git as the source of truth for current execution state, and blocks or
+reports mutations that no longer match the declared boundary.
+
+## Problem statement
+
+AI-assisted coding sessions often begin with a reviewed task, a target branch,
+and a set of files that are safe to change. The local repository can drift after
+that review: a branch switch, a new commit, a stale working tree, or a staged
+change outside the intended scope can make the original execution assumptions
+invalid.
+
+ContextOS addresses that gap by making the execution assumptions explicit and
+checking them against local Git state before commit or push. The goal is not to
+judge code quality or model behavior. The goal is to keep an AI-assisted
+mutation inside a deterministic, locally verifiable boundary.
+
+## Architecture overview
+
+ContextOS has two local command surfaces:
+
+- `contextos ingest <context_packet.yaml>` converts reviewed context into
+  `.contextos/session_context.json`.
+- `verify_cli.py` checks Git state, declared path scope, protected paths, and
+  context freshness before allowing work to proceed.
+
+```text
+Reviewed context packet
+        |
+        v
++------------------+
+| contextos ingest |
++------------------+
+        |
+        v
+.contextos/session_context.json
+        |
+        v
++-----------------------------+        +----------------------+
+| verify_cli.py               |<------>| local Git repository |
+| - branch freshness          |        | - branch             |
+| - HEAD hash freshness       |        | - HEAD hash          |
+| - allowed path scope        |        | - working tree diff  |
+| - protected staged paths    |        | - staged diff        |
++-----------------------------+        +----------------------+
+        |
+        v
+terminal result + optional markdown audit report
+```
+
+## Core concepts
+
+### Stale execution context
+
+A stale execution context exists when the repository state no longer matches the
+state recorded when context was ingested. Examples include:
+
+- the local branch changed after ingestion
+- the Git HEAD hash changed after ingestion
+- the local branch is behind its configured remote-tracking branch
+
+When this happens, verification prints `CONTEXT STALE` with explicit reasons and
+deterministic remediation steps.
+
+### AI-assisted mutation
+
+An AI-assisted mutation is any local repository change made by, suggested by, or
+continued from an AI-assisted development session. ContextOS treats it like any
+other local Git mutation: it must fit the declared branch, freshness, path, and
+protected-path constraints before it can proceed.
+
+### Execution boundary
+
+An execution boundary is the local contract that defines where a development
+task may operate. In ContextOS, the boundary is made from:
+
+- ingested session context
+- current Git branch and HEAD hash
+- allowed file paths
+- protected file paths
+- staged and unstaged Git diffs
+
+### Git authoritative state
+
+ContextOS treats local Git state as authoritative. It does not call external
+services to decide whether a session is valid. It reads deterministic local Git
+commands such as:
+
+- `git branch --show-current`
+- `git rev-parse HEAD`
+- `git status --porcelain=v1 -z`
+- `git diff --name-only`
+- `git diff --cached --name-only`
+
+### Declared execution contracts
+
+A declared execution contract is a small local file that says what the task is
+allowed to do. ContextOS currently uses:
+
+- `context_packet.yaml` for reviewed task context
+- `.contextos/session_context.json` for ingested branch and HEAD provenance
+- `policy.yaml` for allowed and protected paths
+- `session.json` for verification-time branch expectations
+
+### Path-scope enforcement
+
+`allowed_paths` define the files or directories a task may change. Verification
+compares changed files against this list and fails when a file is outside scope.
+This keeps a task focused on its reviewed file boundary.
+
+### Branch freshness validation
+
+Branch freshness validation compares current Git state with
+`.contextos/session_context.json`. Verification fails when the local branch or
+HEAD no longer matches the ingested context, or when the branch is behind its
+configured upstream.
+
+### Protected paths
+
+`protected_paths` define files or directories that require extra scrutiny. They
+are checked against staged changes from `git diff --cached --name-only`.
+
+Protected paths support two modes:
+
+- advisory: print a warning without failing verification
+- enforce: fail verification when staged protected paths are touched
+
+### Audit and provenance reporting
+
+When `--report` is provided, verification writes a markdown audit report with:
+
+- timestamp
+- repo and branch
+- changed files
+- allowed files
+- violations
+- context freshness results
+- protected path violations
+- Git status summary
+
+The report is local-first provenance for what was checked and why verification
+passed or failed.
+
+## Design principles
+
+- **Deterministic by default:** output is based on local files and Git commands.
+- **Local-first:** no external APIs or services are required.
+- **Git-centered:** the current branch, HEAD, working tree, and staged diff are
+  the authoritative execution state.
+- **Small contracts:** context and policy are stored in simple JSON/YAML files.
+- **Fail clearly:** mismatches should produce direct terminal output with
+  concrete remediation.
+- **Composable:** verification can run manually, in demos, or from a pre-commit
+  hook.
+- **Narrow scope:** ContextOS bounds execution; it does not replace tests,
+  reviews, or code ownership.
+
+## Glossary
+
+- **Allowed path:** A file or directory pattern where task changes are permitted.
+- **Audit report:** A markdown file containing verification inputs, results, and
+  violations.
+- **Context packet:** Reviewed task context provided as `context_packet.yaml`.
+- **Execution boundary:** The local set of branch, HEAD, path, and protection
+  constraints for a task.
+- **Freshness:** Whether current Git state still matches ingested context.
+- **Git authoritative state:** The local Git branch, HEAD, status, and diffs used
+  as verification inputs.
+- **Protected path:** A staged file path that should warn or block when touched.
+- **Session context:** The ingested `.contextos/session_context.json` file.
+- **Stale execution context:** A session context that no longer matches local Git
+  state.
+
+## Limitations
+
+- The YAML support is intentionally minimal and only covers the simple packet and
+  policy shapes used by ContextOS.
+- Branch freshness is based on local Git metadata. Remote freshness depends on
+  the local repository having current remote-tracking refs.
+- Protected path matching is path-pattern based; it does not inspect file
+  contents.
+- Verification does not decide whether a code change is correct. It only checks
+  execution boundary constraints.
+- The audit report records local verification results, not a signed attestation.
+
+## Future work
+
+- Share YAML parsing helpers between `contextos.py` and `verify_cli.py`.
+- Add optional machine-readable verification output.
+- Add richer policy modes for branch-specific or task-specific protected paths.
+- Add examples for CI usage while keeping local verification as the primary
+  workflow.
+- Add report hashing or signing for teams that need stronger provenance.
+
 ## Demos
 
 - `demos/jillypickles-stale-plan/` contains a reproducible stale
