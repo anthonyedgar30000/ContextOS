@@ -296,11 +296,48 @@ Suggested remediation:
 2. run contextos ingest again
 ```
 
-Enable the tracked pre-commit hook to run verification before each commit:
+Install the standard local Git pre-commit hook to run verification before each
+commit:
 
 ```sh
-git config core.hooksPath .githooks
+python3 install_hooks.py --mode enforce
 ```
 
-The hook executes `verify_cli.py` with `--protected-mode enforce` and aborts the
-commit when verification fails.
+This writes `.git/hooks/pre-commit` in the current repository. The installed
+hook executes `verify_cli.py` and aborts the commit when verification fails.
+
+Use advisory mode when protected path touches should warn without blocking:
+
+```sh
+python3 install_hooks.py --mode advisory
+```
+
+Sample installation output:
+
+```text
+ContextOS hook installer
+repo: /path/to/repo
+hook: /path/to/repo/.git/hooks/pre-commit
+mode: enforce
+status: installed
+```
+
+Sample blocked commit output:
+
+```text
+ContextOS pre-commit: running verify_cli.py
+protected paths: FAILED
+protected mode: enforce
+protected path violations:
+  protected path violation: deploy/production.yml matches deploy/**
+verification: FAILED
+ContextOS pre-commit: verification failed; commit blocked
+Suggested remediation:
+1. review the verification output above
+2. regenerate the context packet if context is stale
+3. run: ./contextos ingest context_packet.yaml
+4. adjust staged changes or policy before retrying
+```
+
+The repository also includes `.githooks/pre-commit` for workflows that prefer
+`git config core.hooksPath .githooks`.
