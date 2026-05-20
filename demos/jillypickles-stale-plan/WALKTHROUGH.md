@@ -49,6 +49,7 @@ CONTEXTOS_DEMO_WORKDIR=/tmp/my-contextos-demo demos/jillypickles-stale-plan/run_
 - `expected_audit_report_excerpt.md` - expected markdown audit report sections.
 - `failure_explanation.md` - why verification fails.
 - `remediation_explanation.md` - how to recover safely.
+- `freshness_failure_scenario.md` - sample `verify-freshness` failure case.
 - `screenshots/` - placeholder directory for captured demo screenshots.
 
 ## Why this is realistic

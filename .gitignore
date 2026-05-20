@@ -3,6 +3,7 @@ __pycache__/
 .contextos/session_context.json
 .contextos/execution_result.md
 .contextos/state_switch_report.md
+.contextos/freshness_report.md
 .contextos/audit/generated_issue.md
 .contextos/audit/issue_packets/*
 .contextos/audit/generated_issues/*
@@ -10,9 +11,11 @@ __pycache__/
 .contextos/audit/verification_reports/*
 .contextos/audit/execution_results/*
 .contextos/audit/state_switches/*
+.contextos/audit/freshness_reports/*
 !.contextos/audit/issue_packets/.gitkeep
 !.contextos/audit/generated_issues/.gitkeep
 !.contextos/audit/cursor_responses/.gitkeep
 !.contextos/audit/verification_reports/.gitkeep
 !.contextos/audit/execution_results/.gitkeep
 !.contextos/audit/state_switches/.gitkeep
+!.contextos/audit/freshness_reports/.gitkeep

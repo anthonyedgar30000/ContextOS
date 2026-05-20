@@ -96,6 +96,30 @@ class StateSwitchRequest:
     approved: bool
 
 
+@dataclass(frozen=True)
+class ExecutionFreshnessPlan:
+    source_path: Path
+    plan_task_name: str
+    original_objective: str
+    plan_timestamp: str
+    expected_branch: str
+    expected_head: str
+    expected_files_scope: tuple[str, ...]
+    last_verified_branch: str
+    last_verified_head: str
+    last_verified_status: str
+
+
+@dataclass(frozen=True)
+class ExecutionFreshnessResult:
+    classification: str
+    reasoning_summary: str
+    mismatch_sources: tuple[str, ...]
+    recommended_next_action: str
+    replan_recommended: bool
+    execution_blocked: bool
+
+
 REQUIRED_PACKET_FIELDS = ("project", "repo", "branch", "task", "allowed_paths")
 REQUIRED_ISSUE_PACKET_FIELDS = (
     "project",
@@ -135,6 +159,22 @@ EXECUTION_SECTION_ALIASES = {
     "recommended git commands": "recommended_git_commands",
     "recommended git actions": "recommended_git_commands",
     "human approval required": "human_approval_required",
+    "plan timestamp": "plan_timestamp",
+    "execution plan timestamp": "plan_timestamp",
+    "expected branch": "expected_branch",
+    "expected current branch": "expected_branch",
+    "expected head": "expected_head",
+    "expected current head": "expected_head",
+    "expected files/scope": "expected_files_scope",
+    "expected files": "expected_files_scope",
+    "expected scope": "expected_files_scope",
+    "allowed files": "expected_files_scope",
+    "allowed paths": "expected_files_scope",
+    "last verified repo state": "last_verified_status",
+    "last verified status": "last_verified_status",
+    "last verified branch": "last_verified_branch",
+    "last verified head": "last_verified_head",
+    "last verified head hash": "last_verified_head",
 }
 
 
@@ -1036,6 +1076,303 @@ def export_last_plan(repo: Path) -> int:
     return 0
 
 
+def parse_markdown_list_items(section_text: str) -> tuple[str, ...]:
+    items = []
+    in_code_block = False
+    for line in section_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if stripped.startswith("- ") or stripped.startswith("* "):
+            items.append(stripped[2:].strip("`").strip())
+    if items:
+        return tuple(dict.fromkeys(item for item in items if item))
+    if section_text.strip() and section_text.strip() != "(not provided)":
+        return (section_text.strip(),)
+    return ()
+
+
+def parse_execution_plan(path: Path) -> ExecutionFreshnessPlan:
+    text = path.read_text(encoding="utf-8")
+    title, sections = parse_markdown_sections(text)
+    expected_scope = tuple(
+        dict.fromkeys(
+            normalize_repo_path(item, source="execution plan expected files/scope")
+            for item in parse_markdown_list_items(sections.get("expected_files_scope", ""))
+        )
+    )
+
+    return ExecutionFreshnessPlan(
+        source_path=path,
+        plan_task_name=markdown_value(sections.get("plan_task_name", "") or title or ""),
+        original_objective=markdown_value(sections.get("original_objective", "")),
+        plan_timestamp=markdown_value(sections.get("plan_timestamp", "")),
+        expected_branch=markdown_value(sections.get("expected_branch", "")),
+        expected_head=markdown_value(sections.get("expected_head", "")),
+        expected_files_scope=expected_scope,
+        last_verified_branch=markdown_value(sections.get("last_verified_branch", "")),
+        last_verified_head=markdown_value(sections.get("last_verified_head", "")),
+        last_verified_status=markdown_value(sections.get("last_verified_status", "")),
+    )
+
+
+def execution_plan_candidates(repo: Path) -> list[Path]:
+    audit_root = repo / ".contextos" / "audit"
+    return [
+        repo / ".contextos" / "execution_plan.md",
+        repo / ".contextos" / "execution_result.md",
+        *sorted((audit_root / "execution_results").glob("*.md")),
+        *sorted((audit_root / "verification_reports").glob("*.md")),
+    ]
+
+
+def find_latest_execution_plan(repo: Path) -> Path:
+    latest = latest_path(execution_plan_candidates(repo))
+    if latest is None:
+        raise ContextOSError(
+            "No execution plan found. Create one at .contextos/execution_plan.md "
+            "or save a recent execution result under .contextos/audit/execution_results/."
+        )
+    return latest
+
+
+def parse_plan_timestamp(timestamp: str) -> datetime | None:
+    if timestamp == "(not provided)":
+        return None
+    normalized = timestamp.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def plan_age_hours(timestamp: str) -> float | None:
+    parsed = parse_plan_timestamp(timestamp)
+    if parsed is None:
+        return None
+    age = datetime.now(timezone.utc) - parsed
+    return age.total_seconds() / 3600
+
+
+def path_in_scope(path: str, scope: Sequence[str]) -> bool:
+    normalized = normalize_repo_path(path, source="git status")
+    return any(normalized == item or normalized.startswith(f"{item}/") for item in scope)
+
+
+def changed_paths_for_state(state: RepoState) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            path
+            for path in {
+                *state.staged_changes,
+                *state.unstaged_changes,
+                *state.untracked_files,
+            }
+            if not path == ".contextos" and not path.startswith(".contextos/")
+        )
+    )
+
+
+def unauthorized_paths_for_plan(plan: ExecutionFreshnessPlan, state: RepoState) -> tuple[str, ...]:
+    if not plan.expected_files_scope:
+        return ()
+    return tuple(
+        path for path in changed_paths_for_state(state) if not path_in_scope(path, plan.expected_files_scope)
+    )
+
+
+def evaluate_execution_freshness(
+    *,
+    plan: ExecutionFreshnessPlan,
+    state: RepoState,
+    freshness_threshold_hours: int,
+) -> ExecutionFreshnessResult:
+    mismatches: list[str] = []
+    unauthorized_paths = unauthorized_paths_for_plan(plan, state)
+    application_changes_exist = bool(changed_paths_for_state(state))
+    age_hours = plan_age_hours(plan.plan_timestamp)
+    timestamp_stale = age_hours is None or age_hours > freshness_threshold_hours
+
+    if plan.expected_branch != "(not provided)" and plan.expected_branch != state.current_branch:
+        mismatches.append(
+            f"branch mismatch: expected {plan.expected_branch}, current {state.current_branch}"
+        )
+    if plan.expected_head != "(not provided)" and plan.expected_head != state.current_head:
+        mismatches.append("HEAD mismatch: current HEAD differs from execution plan")
+    if plan.last_verified_branch != "(not provided)" and plan.last_verified_branch != state.current_branch:
+        mismatches.append(
+            "last verified branch mismatch: "
+            f"expected {plan.last_verified_branch}, current {state.current_branch}"
+        )
+    if plan.last_verified_head != "(not provided)" and plan.last_verified_head != state.current_head:
+        mismatches.append("last verified HEAD mismatch: repository evolved after verification")
+    for path in unauthorized_paths:
+        mismatches.append(f"unauthorized file modification: {path}")
+
+    if mismatches:
+        classification = "DIVERGED"
+        reasoning_summary = "Execution context diverged from the plan state."
+        recommended_next_action = "Stop execution, regenerate the plan, and rerun verification."
+        return ExecutionFreshnessResult(
+            classification=classification,
+            reasoning_summary=reasoning_summary,
+            mismatch_sources=tuple(dict.fromkeys(mismatches)),
+            recommended_next_action=recommended_next_action,
+            replan_recommended=True,
+            execution_blocked=True,
+        )
+
+    if timestamp_stale:
+        age_text = "unknown" if age_hours is None else f"{age_hours:.2f} hours"
+        return ExecutionFreshnessResult(
+            classification="STALE",
+            reasoning_summary=(
+                "Execution plan timestamp is outside the freshness threshold "
+                f"({age_text}; threshold {freshness_threshold_hours} hours)."
+            ),
+            mismatch_sources=("execution plan timestamp exceeded freshness threshold",),
+            recommended_next_action="Regenerate the context packet and execution plan before continuing.",
+            replan_recommended=True,
+            execution_blocked=True,
+        )
+
+    if application_changes_exist:
+        return ExecutionFreshnessResult(
+            classification="AGING",
+            reasoning_summary=(
+                "Branch and HEAD still match, but local changes exist. Assumptions may still hold."
+            ),
+            mismatch_sources=("local working tree has staged, unstaged, or untracked changes",),
+            recommended_next_action="Review local changes and rerun verification before committing.",
+            replan_recommended=False,
+            execution_blocked=False,
+        )
+
+    return ExecutionFreshnessResult(
+        classification="FRESH",
+        reasoning_summary="Branch, HEAD, scope, timestamp, and working tree match the plan assumptions.",
+        mismatch_sources=(),
+        recommended_next_action="Continue with verification before commit.",
+        replan_recommended=False,
+        execution_blocked=False,
+    )
+
+
+def render_freshness_report(
+    *,
+    plan: ExecutionFreshnessPlan,
+    state: RepoState,
+    result: ExecutionFreshnessResult,
+    freshness_threshold_hours: int,
+) -> str:
+    return "\n".join(
+        [
+            "# ContextOS execution freshness report",
+            "",
+            f"- Source plan: {plan.source_path}",
+            f"- Plan/task name: {plan.plan_task_name}",
+            f"- Original objective: {plan.original_objective}",
+            f"- Execution plan timestamp: {plan.plan_timestamp}",
+            f"- Freshness threshold hours: {freshness_threshold_hours}",
+            "",
+            "## Classification",
+            result.classification,
+            "",
+            "## Reasoning summary",
+            result.reasoning_summary,
+            "",
+            "## Exact mismatch sources",
+            markdown_list(result.mismatch_sources),
+            "",
+            "## Current repository state",
+            "",
+            f"- Current branch: {state.current_branch}",
+            f"- Current HEAD: {state.current_head}",
+            f"- Dirty working tree: {'yes' if state.dirty_working_tree else 'no'}",
+            "",
+            "### Current changed files",
+            markdown_list(changed_paths_for_state(state)),
+            "",
+            "## Expected plan state",
+            "",
+            f"- Expected branch: {plan.expected_branch}",
+            f"- Expected HEAD: {plan.expected_head}",
+            f"- Last verified branch: {plan.last_verified_branch}",
+            f"- Last verified HEAD: {plan.last_verified_head}",
+            "",
+            "### Expected files/scope",
+            markdown_list(plan.expected_files_scope),
+            "",
+            "## Last verified repo state",
+            plan.last_verified_status,
+            "",
+            "## Recommended next action",
+            result.recommended_next_action,
+            "",
+            "## Re-planning recommended",
+            "yes" if result.replan_recommended else "no",
+            "",
+            "## Execution should be blocked",
+            "yes" if result.execution_blocked else "no",
+            "",
+            "## Architectural rule",
+            "Reasoning generated against one repo state should not automatically retain mutation authority after repo-state divergence.",
+            "",
+        ]
+    )
+
+
+def write_freshness_report(repo: Path, report: str) -> tuple[Path, Path]:
+    report_path = repo / ".contextos" / "freshness_report.md"
+    audit_dir = repo / ".contextos" / "audit" / "freshness_reports"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_dir / f"{audit_timestamp()}_freshness_report.md"
+    report_path.write_text(report, encoding="utf-8")
+    audit_path.write_text(report, encoding="utf-8")
+    return report_path, audit_path
+
+
+def verify_freshness(
+    *,
+    repo: Path,
+    plan_path: Path | None,
+    freshness_threshold_hours: int,
+) -> int:
+    root = repo_root(repo)
+    if plan_path is None:
+        plan_path = find_latest_execution_plan(root)
+    elif not plan_path.is_absolute():
+        plan_path = root / plan_path
+
+    plan = parse_execution_plan(plan_path)
+    state = repo_state(root)
+    result = evaluate_execution_freshness(
+        plan=plan,
+        state=state,
+        freshness_threshold_hours=freshness_threshold_hours,
+    )
+    report = render_freshness_report(
+        plan=plan,
+        state=state,
+        result=result,
+        freshness_threshold_hours=freshness_threshold_hours,
+    )
+    report_path, audit_path = write_freshness_report(root, report)
+    print(report)
+    print("Freshness report:")
+    print(f"  {report_path}")
+    print("Audit copy:")
+    print(f"  {audit_path}")
+    return 0 if result.classification in {"FRESH", "AGING"} else 1
+
+
 def repo_state(repo: Path) -> RepoState:
     root = repo_root(repo)
     status_lines = run_git(["status", "--porcelain=v1"], root).splitlines()
@@ -1047,7 +1384,7 @@ def repo_state(repo: Path) -> RepoState:
         if not line:
             continue
         status = line[:2]
-        path = line[3:]
+        path = line[3:] if len(line) > 2 and line[2] == " " else line[2:].lstrip()
         if status == "??":
             untracked_files.append(path)
             continue
@@ -1367,6 +1704,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="execute the state-changing switch if validation passes",
     )
+    freshness_parser = subparsers.add_parser(
+        "verify-freshness",
+        help="classify whether an execution plan still matches current repo state",
+    )
+    freshness_parser.add_argument(
+        "--plan",
+        type=Path,
+        help="path to execution plan markdown (default: latest local execution plan/result)",
+    )
+    freshness_parser.add_argument(
+        "--freshness-threshold-hours",
+        type=int,
+        default=24,
+        help="maximum age before a plan is classified STALE (default: 24)",
+    )
 
     return parser
 
@@ -1394,6 +1746,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_current_branch=args.expected_current_branch,
                 expected_current_head=args.expected_current_head,
                 approve=args.approve,
+            )
+        if args.command == "verify-freshness":
+            return verify_freshness(
+                repo=args.repo,
+                plan_path=args.plan,
+                freshness_threshold_hours=args.freshness_threshold_hours,
             )
     except ContextOSError as error:
         print(f"contextos: ERROR: {error}", file=sys.stderr)

@@ -613,5 +613,150 @@ class RequestSwitchTests(unittest.TestCase):
             self.assertIn("## Git state after execution", output)
 
 
+class VerifyFreshnessTests(unittest.TestCase):
+    def write_plan(
+        self,
+        path: Path,
+        *,
+        branch: str,
+        head: str,
+        timestamp: str = "2999-01-01T00:00:00Z",
+        scope: tuple[str, ...] = ("README.md",),
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        scope_lines = "\n".join(f"- {item}" for item in scope)
+        path.write_text(
+            "# Freshness checked plan\n\n"
+            "## Original objective\n"
+            "Validate execution context before continuing.\n\n"
+            "## Plan timestamp\n"
+            f"{timestamp}\n\n"
+            "## Expected branch\n"
+            f"{branch}\n\n"
+            "## Expected HEAD\n"
+            f"{head}\n\n"
+            "## Expected files/scope\n"
+            f"{scope_lines}\n\n"
+            "## Last verified branch\n"
+            f"{branch}\n\n"
+            "## Last verified HEAD\n"
+            f"{head}\n\n"
+            "## Last verified repo state\n"
+            "Clean working tree at plan creation.\n",
+            encoding="utf-8",
+        )
+
+    def test_verify_freshness_reports_fresh_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            branch = git_current_branch(repo)
+            head = git_head_hash(repo)
+            plan = repo / ".contextos" / "execution_plan.md"
+            self.write_plan(plan, branch=branch, head=head)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    ["--repo", str(repo), "verify-freshness", "--plan", str(plan)]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("## Classification\nFRESH", output)
+            self.assertIn("## Re-planning recommended\nno", output)
+            self.assertIn("## Execution should be blocked\nno", output)
+            self.assertTrue((repo / ".contextos" / "freshness_report.md").exists())
+            self.assertTrue(
+                any(
+                    (repo / ".contextos" / "audit" / "freshness_reports").glob(
+                        "*_freshness_report.md"
+                    )
+                )
+            )
+
+    def test_verify_freshness_reports_aging_for_in_scope_local_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            branch = git_current_branch(repo)
+            head = git_head_hash(repo)
+            plan = repo / ".contextos" / "execution_plan.md"
+            self.write_plan(plan, branch=branch, head=head, scope=("README.md",))
+            (repo / "README.md").write_text("# Changed\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    ["--repo", str(repo), "verify-freshness", "--plan", str(plan)]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("## Classification\nAGING", output)
+            self.assertIn("local working tree has staged, unstaged, or untracked changes", output)
+            self.assertIn("## Execution should be blocked\nno", output)
+
+    def test_verify_freshness_reports_stale_for_old_plan_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            branch = git_current_branch(repo)
+            head = git_head_hash(repo)
+            plan = repo / ".contextos" / "execution_plan.md"
+            self.write_plan(
+                plan,
+                branch=branch,
+                head=head,
+                timestamp="2000-01-01T00:00:00Z",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "verify-freshness",
+                        "--plan",
+                        str(plan),
+                        "--freshness-threshold-hours",
+                        "1",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn("## Classification\nSTALE", output)
+            self.assertIn("execution plan timestamp exceeded freshness threshold", output)
+            self.assertIn("## Re-planning recommended\nyes", output)
+
+    def test_verify_freshness_reports_diverged_for_unauthorized_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            branch = git_current_branch(repo)
+            head = git_head_hash(repo)
+            plan = repo / ".contextos" / "execution_plan.md"
+            self.write_plan(plan, branch=branch, head=head, scope=("README.md",))
+            (repo / "deploy.yml").write_text("replicas: 2\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    ["--repo", str(repo), "verify-freshness", "--plan", str(plan)]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn("## Classification\nDIVERGED", output)
+            self.assertIn("unauthorized file modification: deploy.yml", output)
+            self.assertIn("## Execution should be blocked\nyes", output)
+
+
 if __name__ == "__main__":
     unittest.main()

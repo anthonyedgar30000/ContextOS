@@ -460,6 +460,69 @@ Sample report excerpt:
 State-changing Git commands require explicit human approval via `--approve`.
 ```
 
+## Execution-context freshness verification
+
+Use `contextos verify-freshness` to classify whether a previously generated
+implementation plan still matches current repository reality:
+
+```sh
+./contextos verify-freshness --plan .contextos/execution_plan.md
+```
+
+The command compares:
+
+- current branch
+- current HEAD
+- current working tree status
+- execution plan timestamp
+- expected files/scope
+- last verified repo state
+
+Classifications:
+
+- `FRESH`: branch and HEAD match, there are no unauthorized mutations, and no
+  major drift is detected.
+- `AGING`: branch and HEAD match, but local changes exist inside expected scope.
+- `STALE`: plan timestamp exceeds the freshness threshold or assumptions may be
+  degraded by time.
+- `DIVERGED`: branch mismatch, HEAD mismatch, unauthorized file modification,
+  or policy/scope violation.
+
+Outputs:
+
+- `.contextos/freshness_report.md`
+- audit copies under `.contextos/audit/freshness_reports/`
+
+Sample failure scenario:
+
+```markdown
+# Freshness checked plan
+
+## Plan timestamp
+2026-05-20T12:00:00Z
+
+## Expected branch
+feature/clientA
+
+## Expected HEAD
+abc123
+
+## Expected files/scope
+- docs/clientA.md
+
+## Last verified branch
+feature/clientA
+
+## Last verified HEAD
+abc123
+```
+
+If the current branch is `main` or a file outside `docs/clientA.md` changed,
+ContextOS classifies the plan as `DIVERGED`, recommends re-planning, and marks
+execution as blocked. This enforces the architectural rule that reasoning
+generated against one repo state should not automatically retain mutation
+authority after repo-state divergence.
+
 ## ContextOS ingest
 
 Convert a reviewed ChatGPT context packet into deterministic local execution
