@@ -1,5 +1,10 @@
 # ContextOS
 
+## Demos
+
+- `demos/jillypickles-stale-plan/` contains a reproducible stale
+  execution-plan demo using a local JillyPickles repository.
+
 ## ContextOS ingest
 
 Convert a reviewed ChatGPT context packet into deterministic local execution
