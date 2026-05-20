@@ -496,5 +496,122 @@ class ExportLastPlanTests(unittest.TestCase):
             self.assertNotIn("## Plan/task name\nOld plan", output)
 
 
+class RequestSwitchTests(unittest.TestCase):
+    def prepare_switch_repo(self, repo: Path) -> tuple[str, str]:
+        prepare_repo(repo)
+        branch = git_current_branch(repo)
+        head = git_head_hash(repo)
+        subprocess.run(
+            ["git", "checkout", "-b", "feature/clientA"],
+            cwd=repo,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        subprocess.run(
+            ["git", "checkout", branch],
+            cwd=repo,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        return branch, head
+
+    def request_args(self, repo: Path, branch: str, head: str) -> list[str]:
+        return [
+            "request-switch",
+            "--target-repo",
+            str(repo),
+            "--target-branch",
+            "feature/clientA",
+            "--reason",
+            "Continue reviewed Client A work.",
+            "--requested-by",
+            "ChatGPT",
+            "--source-context",
+            "issue-123",
+            "--expected-current-branch",
+            branch,
+            "--expected-current-head",
+            head,
+        ]
+
+    def test_request_switch_dry_run_writes_report_without_switching(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            branch, head = self.prepare_switch_repo(repo)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(self.request_args(repo, branch, head))
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(git_current_branch(repo), branch)
+            output = stdout.getvalue()
+            self.assertIn("# ContextOS repo-state switch request", output)
+            self.assertIn("- Human approval provided: no", output)
+            self.assertIn("- git switch feature/clientA", output)
+            self.assertIn("### `git switch <branch>`", output)
+            self.assertIn("Not executed. Explicit human approval is required.", output)
+            self.assertTrue((repo / ".contextos" / "state_switch_report.md").exists())
+            self.assertTrue(
+                any(
+                    (repo / ".contextos" / "audit" / "state_switches").glob(
+                        "*_state_switch_report.md"
+                    )
+                )
+            )
+
+    def test_request_switch_approval_is_blocked_when_working_tree_dirty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            branch, head = self.prepare_switch_repo(repo)
+            (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        *self.request_args(repo, branch, head),
+                        "--approve",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(git_current_branch(repo), branch)
+            output = stdout.getvalue()
+            self.assertIn("working tree is dirty; automatic switching is blocked", output)
+            self.assertIn("Recommended safe read-only commands first", output)
+            self.assertIn("git status", output)
+            self.assertIn(
+                "Not executed. Validation failed; state-changing commands were blocked.",
+                output,
+            )
+
+    def test_request_switch_approval_executes_when_validation_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            branch, head = self.prepare_switch_repo(repo)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        *self.request_args(repo, branch, head),
+                        "--approve",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(git_current_branch(repo), "feature/clientA")
+            output = stdout.getvalue()
+            self.assertIn("- Human approval provided: yes", output)
+            self.assertIn("Executed. Current branch verified after switch.", output)
+            self.assertIn("## Git state after execution", output)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -73,6 +73,29 @@ class ExecutionPlanOverview:
     human_approval_required: str
 
 
+@dataclass(frozen=True)
+class RepoState:
+    repo_root: Path
+    current_branch: str
+    current_head: str
+    dirty_working_tree: bool
+    staged_changes: tuple[str, ...]
+    unstaged_changes: tuple[str, ...]
+    untracked_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class StateSwitchRequest:
+    target_repo: Path
+    target_branch: str
+    reason: str
+    requested_by: str
+    source_context: str
+    expected_current_branch: str
+    expected_current_head: str
+    approved: bool
+
+
 REQUIRED_PACKET_FIELDS = ("project", "repo", "branch", "task", "allowed_paths")
 REQUIRED_ISSUE_PACKET_FIELDS = (
     "project",
@@ -427,6 +450,18 @@ def run_git(args: Sequence[str], repo: Path) -> str:
             f"{completed.stderr.strip() or 'no error output'}"
         )
     return completed.stdout.strip()
+
+
+def run_git_checked(args: Sequence[str], repo: Path) -> tuple[int, str, str]:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return completed.returncode, completed.stdout.strip(), completed.stderr.strip()
 
 
 def repo_root(repo: Path) -> Path:
@@ -1001,6 +1036,265 @@ def export_last_plan(repo: Path) -> int:
     return 0
 
 
+def repo_state(repo: Path) -> RepoState:
+    root = repo_root(repo)
+    status_lines = run_git(["status", "--porcelain=v1"], root).splitlines()
+    staged_changes: list[str] = []
+    unstaged_changes: list[str] = []
+    untracked_files: list[str] = []
+
+    for line in status_lines:
+        if not line:
+            continue
+        status = line[:2]
+        path = line[3:]
+        if status == "??":
+            untracked_files.append(path)
+            continue
+        if status[0] != " ":
+            staged_changes.append(path)
+        if status[1] != " ":
+            unstaged_changes.append(path)
+
+    return RepoState(
+        repo_root=root,
+        current_branch=current_branch(root),
+        current_head=head_hash(root),
+        dirty_working_tree=bool(status_lines),
+        staged_changes=tuple(sorted(staged_changes)),
+        unstaged_changes=tuple(sorted(unstaged_changes)),
+        untracked_files=tuple(sorted(untracked_files)),
+    )
+
+
+def local_branch_exists(repo: Path, branch: str) -> bool:
+    exit_code, _, _ = run_git_checked(
+        ["show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+        repo,
+    )
+    return exit_code == 0
+
+
+def remote_branch_exists(repo: Path, branch: str) -> bool:
+    exit_code, _, _ = run_git_checked(
+        ["show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
+        repo,
+    )
+    return exit_code == 0
+
+
+def proposed_switch_commands(state: RepoState, target_branch: str) -> tuple[str, ...]:
+    if local_branch_exists(state.repo_root, target_branch):
+        return (f"git switch {target_branch}",)
+    if remote_branch_exists(state.repo_root, target_branch):
+        return ("git fetch", f"git switch {target_branch}")
+    return ("git fetch", f"git switch {target_branch}")
+
+
+def switch_validation_reasons(
+    request: StateSwitchRequest,
+    state: RepoState,
+) -> tuple[str, ...]:
+    reasons = []
+    if request.expected_current_branch != state.current_branch:
+        reasons.append(
+            "expected current branch "
+            f"{request.expected_current_branch}, observed {state.current_branch}"
+        )
+    if request.expected_current_head != state.current_head:
+        reasons.append(
+            "expected current HEAD "
+            f"{request.expected_current_head}, observed {state.current_head}"
+        )
+    if state.dirty_working_tree:
+        reasons.append("working tree is dirty; automatic switching is blocked")
+    return tuple(reasons)
+
+
+def safe_read_only_commands() -> tuple[str, ...]:
+    return (
+        "git status",
+        "git status --short --branch",
+        "git diff --name-only",
+        "git diff --cached --name-only",
+        "git branch --show-current",
+        "git rev-parse HEAD",
+    )
+
+
+def render_switch_report(
+    *,
+    request: StateSwitchRequest,
+    state_before: RepoState,
+    proposed_commands: Sequence[str],
+    validation_reasons: Sequence[str],
+    execution_status: str,
+    state_after: RepoState | None,
+) -> str:
+    command_explanations = render_git_command_explanations(
+        [*safe_read_only_commands(), *proposed_commands]
+    )
+    state_after_lines = (
+        [
+            f"- Current branch: {state_after.current_branch}",
+            f"- Current HEAD: {state_after.current_head}",
+        ]
+        if state_after is not None
+        else ["- (not executed)"]
+    )
+
+    return "\n".join(
+        [
+            "# ContextOS repo-state switch request",
+            "",
+            "## Request",
+            "",
+            f"- Target repo: {request.target_repo}",
+            f"- Target branch: {request.target_branch}",
+            f"- Reason: {request.reason}",
+            f"- Requested by: {request.requested_by}",
+            f"- Source context: {request.source_context}",
+            f"- Expected current branch: {request.expected_current_branch}",
+            f"- Expected current HEAD: {request.expected_current_head}",
+            f"- Human approval provided: {'yes' if request.approved else 'no'}",
+            "",
+            "## Current Git state before request",
+            "",
+            f"- Repo root: {state_before.repo_root}",
+            f"- Current branch: {state_before.current_branch}",
+            f"- Current HEAD: {state_before.current_head}",
+            f"- Dirty working tree: {'yes' if state_before.dirty_working_tree else 'no'}",
+            "",
+            "### Staged changes",
+            markdown_list(state_before.staged_changes),
+            "",
+            "### Unstaged changes",
+            markdown_list(state_before.unstaged_changes),
+            "",
+            "### Untracked files",
+            markdown_list(state_before.untracked_files),
+            "",
+            "## Validation result",
+            "",
+            markdown_list(validation_reasons),
+            "",
+            "## Proposed Git commands",
+            "",
+            markdown_list(proposed_commands),
+            "",
+            "## Recommended safe read-only commands first",
+            "",
+            markdown_list(safe_read_only_commands()),
+            "",
+            "## Git command explanations",
+            "",
+            command_explanations,
+            "",
+            "## Execution status",
+            "",
+            execution_status,
+            "",
+            "## Git state after execution",
+            "",
+            "\n".join(state_after_lines),
+            "",
+            "## Human approval requirement",
+            "",
+            "State-changing Git commands require explicit human approval via `--approve`.",
+            "",
+        ]
+    )
+
+
+def write_state_switch_report(repo: Path, report: str) -> tuple[Path, Path]:
+    report_path = repo / ".contextos" / "state_switch_report.md"
+    audit_dir = repo / ".contextos" / "audit" / "state_switches"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_dir / f"{audit_timestamp()}_state_switch_report.md"
+    report_path.write_text(report, encoding="utf-8")
+    audit_path.write_text(report, encoding="utf-8")
+    return report_path, audit_path
+
+
+def request_switch(
+    *,
+    target_repo: Path,
+    target_branch: str,
+    reason: str,
+    requested_by: str,
+    source_context: str,
+    expected_current_branch: str,
+    expected_current_head: str,
+    approve: bool,
+) -> int:
+    state_before = repo_state(target_repo)
+    request = StateSwitchRequest(
+        target_repo=target_repo,
+        target_branch=target_branch,
+        reason=reason,
+        requested_by=requested_by,
+        source_context=source_context,
+        expected_current_branch=expected_current_branch,
+        expected_current_head=expected_current_head,
+        approved=approve,
+    )
+    proposed_commands = proposed_switch_commands(state_before, target_branch)
+    validation_reasons = switch_validation_reasons(request, state_before)
+    execution_status = "Not executed. Explicit human approval is required."
+    state_after: RepoState | None = None
+    exit_code = 0
+
+    if approve:
+        if validation_reasons:
+            execution_status = (
+                "Not executed. Validation failed; state-changing commands were blocked."
+            )
+            exit_code = 1
+        elif proposed_commands != (f"git switch {target_branch}",):
+            execution_status = (
+                "Not executed. Target branch is not available locally; review "
+                "`git fetch` and retry after confirming remote state."
+            )
+            exit_code = 1
+        else:
+            switch_exit, _, switch_error = run_git_checked(
+                ["switch", target_branch],
+                state_before.repo_root,
+            )
+            if switch_exit != 0:
+                execution_status = (
+                    "Execution failed. git switch returned: "
+                    f"{switch_error or 'no error output'}"
+                )
+                exit_code = 1
+            else:
+                state_after = repo_state(state_before.repo_root)
+                if state_after.current_branch != target_branch:
+                    execution_status = (
+                        "Execution failed. Current branch does not match target branch."
+                    )
+                    exit_code = 1
+                else:
+                    execution_status = "Executed. Current branch verified after switch."
+
+    report = render_switch_report(
+        request=request,
+        state_before=state_before,
+        proposed_commands=proposed_commands,
+        validation_reasons=validation_reasons,
+        execution_status=execution_status,
+        state_after=state_after,
+    )
+    report_path, audit_path = write_state_switch_report(state_before.repo_root, report)
+    print(report)
+    print("State switch report:")
+    print(f"  {report_path}")
+    print("Audit copy:")
+    print(f"  {audit_path}")
+    return exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="contextos",
@@ -1057,6 +1351,22 @@ def build_parser() -> argparse.ArgumentParser:
         "export-last-plan",
         help="export the latest local Cursor execution result for ChatGPT review",
     )
+    switch_parser = subparsers.add_parser(
+        "request-switch",
+        help="request a validated repo/branch state switch",
+    )
+    switch_parser.add_argument("--target-repo", required=True, type=Path)
+    switch_parser.add_argument("--target-branch", required=True)
+    switch_parser.add_argument("--reason", required=True)
+    switch_parser.add_argument("--requested-by", required=True)
+    switch_parser.add_argument("--source-context", required=True)
+    switch_parser.add_argument("--expected-current-branch", required=True)
+    switch_parser.add_argument("--expected-current-head", required=True)
+    switch_parser.add_argument(
+        "--approve",
+        action="store_true",
+        help="execute the state-changing switch if validation passes",
+    )
 
     return parser
 
@@ -1074,6 +1384,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return create_issue(args.packet, args.repo, args.output)
         if args.command == "export-last-plan":
             return export_last_plan(args.repo)
+        if args.command == "request-switch":
+            return request_switch(
+                target_repo=args.target_repo,
+                target_branch=args.target_branch,
+                reason=args.reason,
+                requested_by=args.requested_by,
+                source_context=args.source_context,
+                expected_current_branch=args.expected_current_branch,
+                expected_current_head=args.expected_current_head,
+                approve=args.approve,
+            )
     except ContextOSError as error:
         print(f"contextos: ERROR: {error}", file=sys.stderr)
         return 2

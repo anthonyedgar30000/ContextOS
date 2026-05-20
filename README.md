@@ -383,6 +383,83 @@ Implement issue bridge
 Yes. Human review is required before posting or merging.
 ````
 
+## Repo-state switch requests
+
+Use `contextos request-switch` when a ChatGPT-generated plan needs to request a
+repository or branch state change. The command inspects local Git state,
+explains proposed Git commands, writes a report, and refuses to execute any
+state-changing switch unless `--approve` is explicitly provided.
+
+Dry-run request:
+
+```sh
+./contextos request-switch \
+  --target-repo . \
+  --target-branch feature/clientA \
+  --reason "Continue reviewed Client A work" \
+  --requested-by "ChatGPT" \
+  --source-context "issue-123" \
+  --expected-current-branch main \
+  --expected-current-head <current-head-hash>
+```
+
+Approved execution, only after human review:
+
+```sh
+./contextos request-switch \
+  --target-repo . \
+  --target-branch feature/clientA \
+  --reason "Continue reviewed Client A work" \
+  --requested-by "ChatGPT" \
+  --source-context "issue-123" \
+  --expected-current-branch main \
+  --expected-current-head <current-head-hash> \
+  --approve
+```
+
+Behavior:
+
+- inspects repo root, current branch, current HEAD, staged changes, unstaged
+  changes, and untracked files
+- blocks automatic switching when the working tree is dirty
+- recommends read-only commands first, such as `git status` and
+  `git diff --cached --name-only`
+- proposes `git switch <branch>` when the branch exists locally
+- proposes `git fetch` plus `git switch <branch>` when the branch is not known
+  locally
+- explains every recommended Git command with risk and state-change metadata
+- writes `.contextos/state_switch_report.md`
+- stores audit copies under `.contextos/audit/state_switches/`
+
+Sample report excerpt:
+
+```markdown
+# ContextOS repo-state switch request
+
+## Current Git state before request
+
+- Current branch: main
+- Current HEAD: <current-head-hash>
+- Dirty working tree: no
+
+## Proposed Git commands
+
+- git switch feature/clientA
+
+## Git command explanations
+
+### `git switch <branch>`
+
+- Explanation: Switches the working tree and HEAD to the specified branch.
+- Risk: `STATE_CHANGING`
+- Potential consequences: HEAD and working tree state can change. Uncommitted changes may conflict with the switch.
+- Changes state: yes
+
+## Human approval requirement
+
+State-changing Git commands require explicit human approval via `--approve`.
+```
+
 ## ContextOS ingest
 
 Convert a reviewed ChatGPT context packet into deterministic local execution

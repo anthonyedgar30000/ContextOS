@@ -146,6 +146,26 @@ GIT_COMMAND_EXPLANATIONS: dict[str, GitCommandExplanation] = {
         consequences="A new local branch is created and HEAD moves to that branch.",
         changes_state=True,
     ),
+    "git switch <branch>": GitCommandExplanation(
+        command="git switch <branch>",
+        explanation="Switches the working tree and HEAD to the specified branch.",
+        risk=STATE_CHANGING,
+        consequences=(
+            "HEAD and working tree state can change. Uncommitted changes may "
+            "conflict with the switch."
+        ),
+        changes_state=True,
+    ),
+    "git fetch": GitCommandExplanation(
+        command="git fetch",
+        explanation="Downloads remote refs and objects without changing the working tree.",
+        risk=STATE_CHANGING,
+        consequences=(
+            "Local remote-tracking refs can change. Checked-out files and local "
+            "commits are not modified."
+        ),
+        changes_state=True,
+    ),
     "git config core.hooksPath .githooks": GitCommandExplanation(
         command="git config core.hooksPath .githooks",
         explanation=(
@@ -216,6 +236,8 @@ def canonical_git_command(command: str | Sequence[str]) -> str:
         return "git checkout <branch>"
     if parts[:3] == ["git", "checkout", "-b"] and len(parts) == 4:
         return "git checkout -b <branch>"
+    if parts[:2] == ["git", "switch"] and len(parts) == 3:
+        return "git switch <branch>"
     if parts[:4] == ["git", "push", "-u", "origin"] and len(parts) == 5:
         return "git push -u origin <branch>"
     if parts[:3] == ["git", "push", "origin"] and len(parts) == 4:

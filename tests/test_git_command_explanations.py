@@ -34,6 +34,16 @@ class GitCommandExplanationTests(unittest.TestCase):
         self.assertEqual(explanation.command, "git push -u origin <branch>")
         self.assertEqual(explanation.risk, explanations.REMOTE_CHANGING)
 
+    def test_switch_and_fetch_commands_are_explained(self) -> None:
+        switch = explanations.explain_git_command("git switch main")
+        fetch = explanations.explain_git_command("git fetch")
+
+        self.assertEqual(switch.command, "git switch <branch>")
+        self.assertEqual(switch.risk, explanations.STATE_CHANGING)
+        self.assertTrue(switch.changes_state)
+        self.assertEqual(fetch.command, "git fetch")
+        self.assertEqual(fetch.risk, explanations.STATE_CHANGING)
+
     def test_unknown_command_fails_closed(self) -> None:
         with self.assertRaisesRegex(
             explanations.GitCommandExplanationError,
