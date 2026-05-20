@@ -62,8 +62,17 @@ state recorded when context was ingested. Examples include:
 - the Git HEAD hash changed after ingestion
 - the local branch is behind its configured remote-tracking branch
 
-When this happens, verification prints `CONTEXT STALE` with explicit reasons and
-deterministic remediation steps.
+Verification classifies context freshness as:
+
+- `FRESH`: branch and HEAD match the ingested context and the branch is not
+  behind its configured upstream.
+- `AGING`: branch and HEAD still match, but the local branch is behind its
+  configured upstream.
+- `STALE`: the branch or HEAD changed after ingestion.
+- `DIVERGED`: the repository is in detached HEAD state.
+
+When context is not fresh, verification prints the classification with explicit
+reasons and deterministic remediation steps.
 
 ### AI-assisted mutation
 
@@ -279,21 +288,25 @@ python3 verify_cli.py --session session.json --policy policy.yaml --protected-mo
 Protected path violations are included in markdown audit reports.
 
 When `.contextos/session_context.json` exists, the verification CLI also checks
-that the current branch and Git HEAD still match the ingested context, and that
-the local branch is not behind its configured remote-tracking branch. Stale
-context fails verification with deterministic remediation steps:
+that the current branch and Git HEAD still match the ingested context, detects
+detached HEAD state, and checks whether the local branch is behind its
+configured remote-tracking branch. Context freshness is classified as `FRESH`,
+`AGING`, `STALE`, or `DIVERGED`. Non-fresh context fails verification with
+deterministic remediation steps:
 
 ```text
 CONTEXT STALE
 Reason:
 
-- branch switched from feature/clientA to main
-- HEAD changed since context ingestion
+- session created on feature/clientA
+- current branch is main
+- HEAD changed after ingestion
 
 Suggested remediation:
 
 1. regenerate context packet
-2. run contextos ingest again
+2. run contextos ingest
+3. revalidate before commit
 ```
 
 Install the standard local Git pre-commit hook to run verification before each

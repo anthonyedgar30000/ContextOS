@@ -59,7 +59,8 @@ The stale-plan failure is a common local workflow risk:
 The demo intentionally combines two independent safeguards:
 
 - **Context freshness:** `.contextos/session_context.json` records the branch
-  and HEAD hash from `contextos ingest`.
+  and HEAD hash from `contextos ingest`, then verification classifies the
+  current context as `FRESH`, `AGING`, `STALE`, or `DIVERGED`.
 - **Protected paths:** `verify_cli.py --protected-mode enforce` blocks staged
   changes under `deploy/**`.
 
@@ -69,11 +70,13 @@ The expected result is a non-zero verification exit and a clear remediation:
 CONTEXT STALE
 Reason:
 
-- branch switched from feature/clientA to main
-- HEAD changed since context ingestion
+- session created on feature/clientA
+- current branch is main
+- HEAD changed after ingestion
 
 Suggested remediation:
 
 1. regenerate context packet
-2. run contextos ingest again
+2. run contextos ingest
+3. revalidate before commit
 ```

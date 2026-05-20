@@ -76,13 +76,15 @@ audit report: /tmp/contextos-jillypickles-demo/JillyPickles/audit.md
 CONTEXT STALE
 Reason:
 
-- branch switched from feature/clientA to main
-- HEAD changed since context ingestion
+- session created on feature/clientA
+- current branch is main
+- HEAD changed after ingestion
 
 Suggested remediation:
 
 1. regenerate context packet
-2. run contextos ingest again
+2. run contextos ingest
+3. revalidate before commit
 
 verification exit code: 1
 

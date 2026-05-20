@@ -336,7 +336,10 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                 "protected path violation: deploy/app.yml matches deploy/**",
                 output,
             )
-            self.assertIn(f"verification: {verify_cli.RED}FAILED{verify_cli.RESET}", output)
+            self.assertIn(
+                f"verification: {verify_cli.RED}FAILED{verify_cli.RESET}",
+                output,
+            )
 
     def test_fails_when_session_context_branch_and_head_are_stale(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -384,14 +387,16 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             output = stdout.getvalue()
             self.assertIn("CONTEXT STALE", output)
+            self.assertIn("- session created on feature/clientA", output)
             self.assertIn(
-                f"- branch switched from feature/clientA to {actual_branch}",
+                f"- current branch is {actual_branch}",
                 output,
             )
-            self.assertIn("- HEAD changed since context ingestion", output)
+            self.assertIn("- HEAD changed after ingestion", output)
             self.assertIn("Suggested remediation:", output)
             self.assertIn("1. regenerate context packet", output)
-            self.assertIn("2. run contextos ingest again", output)
+            self.assertIn("2. run contextos ingest", output)
+            self.assertIn("3. revalidate before commit", output)
 
     def test_fails_when_local_branch_is_behind_remote_tracking_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -476,11 +481,69 @@ class VerifyCliIntegrationTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 1)
             output = stdout.getvalue()
-            self.assertIn("CONTEXT STALE", output)
+            self.assertIn("CONTEXT AGING", output)
             self.assertIn(
                 f"- local branch is behind origin/{branch} by 1 commit",
                 output,
             )
+
+    def test_fails_when_repository_is_in_detached_head_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            configure_git_identity(repo)
+            (repo / "README.md").write_text("# Repo\n", encoding="utf-8")
+            git_commit_all(repo, "initial commit")
+            branch = git_current_branch(repo)
+            head_hash = git_head_hash(repo)
+            subprocess.run(
+                ["git", "checkout", "--detach", head_hash],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - .contextos/session_context.json\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+            (repo / ".contextos").mkdir()
+            (repo / ".contextos" / "session_context.json").write_text(
+                json.dumps(
+                    {
+                        "branch": branch,
+                        "git_head_hash": head_hash,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn("CONTEXT DIVERGED", output)
+            self.assertIn(f"- session created on {branch}", output)
+            self.assertIn("- current branch is (detached HEAD)", output)
+            self.assertIn("- current repository is in detached HEAD state", output)
 
     def test_fails_when_status_contains_disallowed_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -634,6 +697,7 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn(f"expected: {actual_branch}", output)
             self.assertIn(f"actual: {actual_branch}", output)
+            self.assertIn("CONTEXT FRESH", output)
             self.assertIn("mismatch reasons:\n  (none)", output)
             self.assertIn("unauthorized files:\n  (none)", output)
             self.assertIn(

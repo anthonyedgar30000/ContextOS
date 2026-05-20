@@ -54,6 +54,12 @@ class ProtectedPathViolation:
     pattern: str
 
 
+@dataclass(frozen=True)
+class ContextFreshness:
+    classification: str
+    reasons: tuple[str, ...]
+
+
 GREEN = "\033[32m"
 RED = "\033[31m"
 RESET = "\033[0m"
@@ -466,40 +472,59 @@ def unauthorized_file_reason(path: str) -> str:
     return f"unauthorized file: {path} (not under allowed_paths)"
 
 
-def session_stale_reasons(
+def context_freshness(
     *,
     session_context: SessionContext | None,
     actual_branch: str,
     actual_head_hash: str,
     behind_reason: str | None,
-) -> list[str]:
+) -> ContextFreshness:
     reasons = []
+    is_detached = actual_branch == "(detached HEAD)"
     if session_context is not None:
         if session_context.branch != actual_branch:
-            reasons.append(
-                f"branch switched from {session_context.branch} to {actual_branch}"
-            )
+            reasons.append(f"session created on {session_context.branch}")
+            reasons.append(f"current branch is {actual_branch}")
         if session_context.git_head_hash != actual_head_hash:
-            reasons.append("HEAD changed since context ingestion")
+            reasons.append("HEAD changed after ingestion")
 
+    if is_detached:
+        reasons.append("current repository is in detached HEAD state")
     if behind_reason is not None:
         reasons.append(behind_reason)
 
-    return reasons
+    if is_detached:
+        classification = "DIVERGED"
+    elif session_context is not None and (
+        session_context.branch != actual_branch
+        or session_context.git_head_hash != actual_head_hash
+    ):
+        classification = "STALE"
+    elif behind_reason is not None:
+        classification = "AGING"
+    else:
+        classification = "FRESH"
+
+    return ContextFreshness(
+        classification=classification,
+        reasons=tuple(dict.fromkeys(reasons)),
+    )
 
 
-def print_context_stale(reasons: Sequence[str]) -> None:
+def print_context_freshness(freshness: ContextFreshness) -> None:
     print()
-    print("CONTEXT STALE")
-    print("Reason:")
-    print()
-    for reason in reasons:
-        print(f"- {reason}")
-    print()
-    print("Suggested remediation:")
-    print()
-    print("1. regenerate context packet")
-    print("2. run contextos ingest again")
+    print(f"CONTEXT {freshness.classification}")
+    if freshness.reasons:
+        print("Reason:")
+        print()
+        for reason in freshness.reasons:
+            print(f"- {reason}")
+        print()
+        print("Suggested remediation:")
+        print()
+        print("1. regenerate context packet")
+        print("2. run contextos ingest")
+        print("3. revalidate before commit")
 
 
 def utc_timestamp() -> str:
@@ -624,12 +649,16 @@ def verify(
         session_context_path = actual_repo_root / ".contextos" / "session_context.json"
     session_context = load_session_context(session_context_path)
     actual_head_hash = git_head_hash(actual_repo_root) if session_context else ""
-    stale_reasons = session_stale_reasons(
+    freshness = context_freshness(
         session_context=session_context,
         actual_branch=actual_branch,
         actual_head_hash=actual_head_hash,
         behind_reason=local_branch_behind_reason(actual_repo_root),
     )
+    freshness_details = [
+        f"classification: {freshness.classification}",
+        *freshness.reasons,
+    ]
 
     raw_status = run_git(
         ["status", "--porcelain=v1", "-z"],
@@ -713,18 +742,18 @@ def verify(
             changed_paths=sorted_changed_paths,
             allowed_paths=policy.allowed_paths,
             violations=[
-                *stale_reasons,
+                *freshness.reasons,
                 *mismatch_reasons,
                 *protected_block_reasons,
             ],
             status_summary=status_summary,
-            stale_reasons=stale_reasons,
+            stale_reasons=freshness_details,
             protected_violations=rendered_protected_violations,
         )
         print(f"audit report: {report_path}")
 
-    if stale_reasons:
-        print_context_stale(stale_reasons)
+    print_context_freshness(freshness)
+    if freshness.classification != "FRESH":
         return 1
 
     if mismatch_reasons:
