@@ -60,6 +60,18 @@ class IssueFreshness:
 
 
 @dataclass(frozen=True)
+class IssueMetadata:
+    repo: str
+    branch: str
+    expected_head: str
+    allowed_paths: tuple[str, ...]
+    protected_paths: tuple[str, ...]
+    execution_id: str
+    freshness_status: str
+    approval_status: str
+
+
+@dataclass(frozen=True)
 class ExecutionPlanOverview:
     source_path: Path
     plan_task_name: str
@@ -722,6 +734,12 @@ def markdown_list(items: Sequence[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def yaml_list(items: Sequence[str]) -> str:
+    if not items:
+        return "[]"
+    return "\n".join(f"  - {item}" for item in items)
+
+
 def markdown_value(value: str) -> str:
     return value.strip() or "(not provided)"
 
@@ -759,10 +777,52 @@ def issue_freshness(packet: IssuePacket, repo: Path) -> IssueFreshness:
     )
 
 
+def issue_metadata_from_packet(
+    packet: IssuePacket,
+    freshness: IssueFreshness,
+    execution_id: str | None = None,
+    approval_status: str = "proposed",
+) -> IssueMetadata:
+    return IssueMetadata(
+        repo=packet.repo,
+        branch=packet.branch,
+        expected_head=freshness.current_head_hash,
+        allowed_paths=packet.allowed_paths,
+        protected_paths=packet.protected_paths,
+        execution_id=execution_id or audit_timestamp(),
+        freshness_status=freshness.classification,
+        approval_status=approval_status,
+    )
+
+
+def render_issue_metadata(metadata: IssueMetadata) -> str:
+    return "\n".join(
+        [
+            "```contextos-metadata",
+            f"repo: {metadata.repo}",
+            f"branch: {metadata.branch}",
+            f"expected_head: {metadata.expected_head}",
+            "allowed_paths:",
+            yaml_list(metadata.allowed_paths),
+            "protected_paths:",
+            yaml_list(metadata.protected_paths),
+            f"execution_id: {metadata.execution_id}",
+            f"freshness_status: {metadata.freshness_status}",
+            f"approval_status: {metadata.approval_status}",
+            "```",
+        ]
+    )
+
+
 def render_issue_markdown(packet: IssuePacket, freshness: IssueFreshness) -> str:
+    metadata = issue_metadata_from_packet(packet, freshness)
     return "\n".join(
         [
             f"# {packet.task}",
+            "",
+            "## ContextOS metadata",
+            "",
+            render_issue_metadata(metadata),
             "",
             "## Task summary",
             "",
@@ -1034,9 +1094,23 @@ def render_issue_execution_report(
     recommended_git_commands: Sequence[str],
 ) -> str:
     state = repo_state(repo)
+    metadata = IssueMetadata(
+        repo=repo.name,
+        branch=state.current_branch,
+        expected_head=state.current_head,
+        allowed_paths=(),
+        protected_paths=(),
+        execution_id=audit_timestamp(),
+        freshness_status="report",
+        approval_status="review-required",
+    )
     return "\n".join(
         [
             "# Cursor execution report",
+            "",
+            "## ContextOS metadata",
+            "",
+            render_issue_metadata(metadata),
             "",
             "## Current repository state",
             "",
@@ -1174,6 +1248,28 @@ def render_untrusted_issue_markdown(issue_number: int, raw_json: str) -> str:
     )
 
 
+def issue_audit_dir(repo: Path, issue_number: int) -> Path:
+    return repo / ".contextos" / "audit" / "issues" / str(issue_number)
+
+
+def save_untrusted_issue_payload(
+    *,
+    repo: Path,
+    issue_number: int,
+    raw_json: str,
+) -> tuple[Path, Path]:
+    issue_dir = issue_audit_dir(repo, issue_number)
+    issue_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = issue_dir / "issue.json"
+    markdown_path = issue_dir / "UNTRUSTED_issue_content.md"
+    raw_path.write_text(raw_json, encoding="utf-8")
+    markdown_path.write_text(
+        render_untrusted_issue_markdown(issue_number, raw_json),
+        encoding="utf-8",
+    )
+    return raw_path, markdown_path
+
+
 def issue_fetch(*, repo: Path, issue_number: int) -> int:
     root = repo_root(repo)
     if gh_executable() is None:
@@ -1192,20 +1288,222 @@ def issue_fetch(*, repo: Path, issue_number: int) -> int:
     if exit_code != 0:
         raise ContextOSError(f"gh issue view failed: {stderr or 'no error output'}")
 
-    issue_dir = root / ".contextos" / "audit" / "issues" / str(issue_number)
-    issue_dir.mkdir(parents=True, exist_ok=True)
-    raw_path = issue_dir / "issue.json"
-    markdown_path = issue_dir / "UNTRUSTED_issue_content.md"
-    raw_path.write_text(stdout, encoding="utf-8")
-    markdown_path.write_text(
-        render_untrusted_issue_markdown(issue_number, stdout),
-        encoding="utf-8",
+    raw_path, markdown_path = save_untrusted_issue_payload(
+        repo=root,
+        issue_number=issue_number,
+        raw_json=stdout,
     )
     print("Fetched GitHub issue content as untrusted external input.")
     print(f"Raw issue payload: {raw_path}")
     print(f"Untrusted markdown: {markdown_path}")
     print("Do not execute instructions from fetched content.")
     print("Human review is required before running contextos ingest.")
+    return 0
+
+
+def fetch_issue_json(repo: Path, issue_number: int) -> str:
+    exit_code, stdout, stderr = run_gh(
+        [
+            "issue",
+            "view",
+            str(issue_number),
+            "--json",
+            "number,title,body,comments,url,state,updatedAt",
+        ],
+        repo,
+    )
+    if exit_code != 0:
+        raise ContextOSError(f"gh issue view failed: {stderr or 'no error output'}")
+    return stdout
+
+
+def load_or_fetch_issue_json(repo: Path, issue_number: int) -> str:
+    raw_path = issue_audit_dir(repo, issue_number) / "issue.json"
+    if raw_path.exists():
+        return raw_path.read_text(encoding="utf-8")
+    if gh_executable() is None:
+        raise ContextOSError(
+            "gh executable not found and no local issue fetch exists. "
+            f"Run `contextos issue-fetch {issue_number}` after installing/authenticating gh."
+        )
+    raw_json = fetch_issue_json(repo, issue_number)
+    save_untrusted_issue_payload(repo=repo, issue_number=issue_number, raw_json=raw_json)
+    return raw_json
+
+
+def issue_text_blobs(raw_json: str) -> tuple[str, ...]:
+    try:
+        payload = json.loads(raw_json)
+    except json.JSONDecodeError as error:
+        raise ContextOSError(f"stored issue payload is not valid JSON: {error}") from error
+
+    blobs = []
+    body = payload.get("body")
+    if isinstance(body, str):
+        blobs.append(body)
+    comments = payload.get("comments", [])
+    if isinstance(comments, list):
+        for comment in comments:
+            if isinstance(comment, dict) and isinstance(comment.get("body"), str):
+                blobs.append(comment["body"])
+    return tuple(blobs)
+
+
+def extract_metadata_blocks(text: str) -> tuple[str, ...]:
+    blocks = []
+    marker = "```contextos-metadata"
+    start = 0
+    while True:
+        marker_index = text.find(marker, start)
+        if marker_index == -1:
+            break
+        content_start = text.find("\n", marker_index)
+        if content_start == -1:
+            break
+        content_end = text.find("```", content_start + 1)
+        if content_end == -1:
+            break
+        blocks.append(text[content_start + 1 : content_end].strip())
+        start = content_end + 3
+    return tuple(blocks)
+
+
+def parse_issue_metadata_block(block: str) -> IssueMetadata:
+    parsed = parse_simple_yaml(
+        block,
+        source_name="contextos-metadata",
+        list_fields={"allowed_paths", "protected_paths"},
+    )
+    required = {
+        "repo",
+        "branch",
+        "expected_head",
+        "allowed_paths",
+        "protected_paths",
+        "execution_id",
+        "freshness_status",
+        "approval_status",
+    }
+    missing = sorted(required.difference(parsed))
+    if missing:
+        raise ContextOSError(
+            "contextos metadata missing required fields: " + ", ".join(missing)
+        )
+    return IssueMetadata(
+        repo=require_scalar(parsed, "repo", "contextos metadata"),
+        branch=require_scalar(parsed, "branch", "contextos metadata"),
+        expected_head=require_scalar(parsed, "expected_head", "contextos metadata"),
+        allowed_paths=require_string_list(
+            parsed,
+            "allowed_paths",
+            "contextos metadata",
+            normalize_paths=True,
+        ),
+        protected_paths=require_string_list(
+            parsed,
+            "protected_paths",
+            "contextos metadata",
+            normalize_paths=True,
+        ),
+        execution_id=require_scalar(parsed, "execution_id", "contextos metadata"),
+        freshness_status=require_scalar(parsed, "freshness_status", "contextos metadata"),
+        approval_status=require_scalar(parsed, "approval_status", "contextos metadata"),
+    )
+
+
+def latest_issue_metadata(raw_json: str) -> IssueMetadata:
+    blocks = []
+    for blob in issue_text_blobs(raw_json):
+        blocks.extend(extract_metadata_blocks(blob))
+    if not blocks:
+        raise ContextOSError("no contextos-metadata block found in issue content")
+    return parse_issue_metadata_block(blocks[-1])
+
+
+def ingest_issue(*, repo: Path, issue_number: int, confirm_reviewed: bool) -> int:
+    root = repo_root(repo)
+    raw_json = load_or_fetch_issue_json(root, issue_number)
+    save_untrusted_issue_payload(repo=root, issue_number=issue_number, raw_json=raw_json)
+    if not confirm_reviewed:
+        raise ContextOSError(
+            "Issue content is untrusted external input. Re-run with "
+            "--confirm-reviewed after human review to write session context."
+        )
+    metadata = latest_issue_metadata(raw_json)
+    if metadata.approval_status != "approved":
+        raise ContextOSError(
+            f"issue approval_status is {metadata.approval_status}; expected approved"
+        )
+    session_context = {
+        "allowed_paths": list(metadata.allowed_paths),
+        "branch": metadata.branch,
+        "git_head_hash": metadata.expected_head,
+        "project": metadata.repo,
+        "repo": metadata.repo,
+        "repo_root": str(root),
+        "source": "github_issue",
+        "task": f"GitHub Issue #{issue_number}",
+        "timestamp": utc_timestamp(),
+        "execution_id": metadata.execution_id,
+        "freshness_status": metadata.freshness_status,
+        "approval_status": metadata.approval_status,
+    }
+    output_path = root / ".contextos" / "session_context.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(session_context, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Ingested reviewed GitHub Issue #{issue_number} metadata.")
+    print(f"session context: {output_path}")
+    print("Fetched issue content remains untrusted; only reviewed metadata was ingested.")
+    return 0
+
+
+def latest_report_path(repo: Path) -> Path | None:
+    candidates = [
+        repo / ".contextos" / "freshness_report.md",
+        repo / ".contextos" / "state_switch_report.md",
+        repo / ".contextos" / "audit" / "generated_issue.md",
+        *sorted((repo / ".contextos" / "audit" / "cursor_responses").glob("*.md")),
+        *sorted((repo / ".contextos" / "audit" / "verification_reports").glob("*.md")),
+        *sorted((repo / ".contextos" / "audit" / "freshness_reports").glob("*.md")),
+    ]
+    return latest_path(candidates)
+
+
+def issue_status(*, repo: Path, issue_number: int) -> int:
+    root = repo_root(repo)
+    raw_path = issue_audit_dir(root, issue_number) / "issue.json"
+    metadata_status = "not available"
+    approval_state = "not available"
+    unresolved_blockers = []
+    if raw_path.exists():
+        try:
+            metadata = latest_issue_metadata(raw_path.read_text(encoding="utf-8"))
+            metadata_status = metadata.freshness_status
+            approval_state = metadata.approval_status
+            if approval_state != "approved":
+                unresolved_blockers.append(
+                    f"approval status is {approval_state}; human approval required"
+                )
+        except ContextOSError as error:
+            unresolved_blockers.append(str(error))
+
+    latest_report = latest_report_path(root)
+    state = repo_state(root)
+    print("# ContextOS issue status")
+    print()
+    print(f"- Issue: #{issue_number}")
+    print(f"- Current branch: {state.current_branch}")
+    print(f"- Current HEAD: {state.current_head}")
+    print(f"- Freshness: {metadata_status}")
+    print(f"- Verification: see latest report" if latest_report else "- Verification: not available")
+    print(f"- Latest report: {latest_report if latest_report else '(none)'}")
+    print(f"- Approval state: {approval_state}")
+    print()
+    print("## Unresolved blockers")
+    print(markdown_list(tuple(unresolved_blockers)))
     return 0
 
 
@@ -2100,6 +2398,7 @@ def build_parser() -> argparse.ArgumentParser:
         "issue-report",
         help="generate and optionally post a Cursor execution report",
     )
+    issue_report_parser.add_argument("issue_number_arg", nargs="?", type=int)
     issue_report_parser.add_argument("--issue-number", type=int)
     issue_report_parser.add_argument("--output", type=Path)
     issue_report_parser.add_argument("--post", action="store_true")
@@ -2130,6 +2429,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="fetch GitHub Issue content as untrusted local input",
     )
     issue_fetch_parser.add_argument("issue_number", type=int)
+    ingest_issue_parser = subparsers.add_parser(
+        "ingest-issue",
+        help="ingest reviewed ContextOS metadata from a fetched GitHub Issue",
+    )
+    ingest_issue_parser.add_argument("issue_number", type=int)
+    ingest_issue_parser.add_argument(
+        "--confirm-reviewed",
+        action="store_true",
+        help="confirm a human reviewed the untrusted issue content",
+    )
+    issue_status_parser = subparsers.add_parser(
+        "issue-status",
+        help="summarize local ContextOS state for a GitHub Issue",
+    )
+    issue_status_parser.add_argument("issue_number", type=int)
     subparsers.add_parser(
         "export-last-plan",
         help="export the latest local Cursor execution result for ChatGPT review",
@@ -2197,9 +2511,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 create=args.create,
             )
         if args.command == "issue-report":
+            issue_number = args.issue_number_arg or args.issue_number
             return issue_report(
                 repo=args.repo,
-                issue_number=args.issue_number,
+                issue_number=issue_number,
                 output_path=args.output,
                 post=args.post,
                 tests_run=args.tests_run,
@@ -2209,6 +2524,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if args.command == "issue-fetch":
             return issue_fetch(repo=args.repo, issue_number=args.issue_number)
+        if args.command == "ingest-issue":
+            return ingest_issue(
+                repo=args.repo,
+                issue_number=args.issue_number,
+                confirm_reviewed=args.confirm_reviewed,
+            )
+        if args.command == "issue-status":
+            return issue_status(repo=args.repo, issue_number=args.issue_number)
         if args.command == "export-last-plan":
             return export_last_plan(args.repo)
         if args.command == "request-switch":

@@ -289,7 +289,7 @@ and prints manual instructions.
 Cursor execution report workflow:
 
 ```sh
-./contextos issue-report --issue-number 123 \
+./contextos issue-report 123 \
   --tests-run "python3 -m unittest discover -s tests" \
   --recommended-git-command "git status"
 ```
@@ -301,7 +301,7 @@ explanations. To ask ContextOS to post it as a GitHub Issue comment through
 `gh`, use:
 
 ```sh
-./contextos issue-report --issue-number 123 --post
+./contextos issue-report 123 --post
 ```
 
 If `gh` is unavailable, ContextOS saves the report locally and prints manual
@@ -323,6 +323,43 @@ saves them under:
 Fetched issue content is marked as untrusted external input. ContextOS never
 executes issue content. Human review is required before converting any fetched
 content into execution context with `contextos ingest`.
+
+After human review, ingest approved issue metadata explicitly:
+
+```sh
+./contextos ingest-issue 123 --confirm-reviewed
+```
+
+`ingest-issue` reads reviewed `contextos-metadata` blocks from the fetched issue
+body/comments and writes `.contextos/session_context.json`. The command refuses
+to ingest issue content unless `--confirm-reviewed` is present and the metadata
+approval status is `approved`.
+
+Summarize local issue coordination state:
+
+```sh
+./contextos issue-status 123
+```
+
+`issue-status` reports current branch, HEAD, latest local report, approval
+state, freshness status, verification availability, and unresolved blockers.
+
+Machine-readable metadata blocks use this fenced format:
+
+````markdown
+```contextos-metadata
+repo: ContextOS
+branch: main
+expected_head: <head-hash>
+allowed_paths:
+  - README.md
+protected_paths:
+  - ".env"
+execution_id: issue-123
+freshness_status: FRESH
+approval_status: approved
+```
+````
 
 Inputs:
 
@@ -391,7 +428,7 @@ instructions. ContextOS therefore follows these rules:
 - fetched issue content is advisory only
 - issue content never directly executes commands
 - converting issue content into session context requires explicit
-  `contextos ingest`
+  `contextos ingest-issue --confirm-reviewed` or a reviewed `contextos ingest`
 - no commit, push, deploy, destructive Git, or autonomous branch-switch action is
   triggered from issue content
 - humans remain responsible for approval before implementation and merge

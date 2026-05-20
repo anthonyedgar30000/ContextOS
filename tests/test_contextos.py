@@ -545,6 +545,162 @@ class IssueTransportTests(unittest.TestCase):
             self.assertIn("Do not execute commands", untrusted)
             self.assertIn("contextos ingest", untrusted)
 
+    def test_ingest_issue_requires_human_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            raw = {
+                "number": 8,
+                "title": "Approved task",
+                "body": (
+                    "```contextos-metadata\n"
+                    "repo: ContextOS\n"
+                    f"branch: {git_current_branch(repo)}\n"
+                    f"expected_head: {git_head_hash(repo)}\n"
+                    "allowed_paths:\n"
+                    "  - README.md\n"
+                    "protected_paths:\n"
+                    "  - .env\n"
+                    "execution_id: exec-8\n"
+                    "freshness_status: FRESH\n"
+                    "approval_status: approved\n"
+                    "```"
+                ),
+                "comments": [],
+            }
+            issue_dir = repo / ".contextos" / "audit" / "issues" / "8"
+            issue_dir.mkdir(parents=True)
+            (issue_dir / "issue.json").write_text(json.dumps(raw), encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = contextos.main(
+                    ["--repo", str(repo), "ingest-issue", "8"]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("untrusted external input", stderr.getvalue())
+            self.assertFalse((repo / ".contextos" / "session_context.json").exists())
+
+    def test_ingest_issue_writes_session_context_after_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            branch = git_current_branch(repo)
+            head = git_head_hash(repo)
+            raw = {
+                "number": 9,
+                "title": "Approved task",
+                "body": (
+                    "```contextos-metadata\n"
+                    "repo: ContextOS\n"
+                    f"branch: {branch}\n"
+                    f"expected_head: {head}\n"
+                    "allowed_paths:\n"
+                    "  - README.md\n"
+                    "protected_paths:\n"
+                    "  - .env\n"
+                    "execution_id: exec-9\n"
+                    "freshness_status: FRESH\n"
+                    "approval_status: approved\n"
+                    "```"
+                ),
+                "comments": [],
+            }
+            issue_dir = repo / ".contextos" / "audit" / "issues" / "9"
+            issue_dir.mkdir(parents=True)
+            (issue_dir / "issue.json").write_text(json.dumps(raw), encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "ingest-issue",
+                        "9",
+                        "--confirm-reviewed",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            session = json.loads(
+                (repo / ".contextos" / "session_context.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(session["source"], "github_issue")
+            self.assertEqual(session["branch"], branch)
+            self.assertEqual(session["git_head_hash"], head)
+            self.assertEqual(session["approval_status"], "approved")
+
+    def test_issue_status_summarizes_local_issue_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            raw = {
+                "number": 10,
+                "title": "Status task",
+                "body": (
+                    "```contextos-metadata\n"
+                    "repo: ContextOS\n"
+                    f"branch: {git_current_branch(repo)}\n"
+                    f"expected_head: {git_head_hash(repo)}\n"
+                    "allowed_paths:\n"
+                    "  - README.md\n"
+                    "protected_paths: []\n"
+                    "execution_id: exec-10\n"
+                    "freshness_status: FRESH\n"
+                    "approval_status: reviewed\n"
+                    "```"
+                ),
+                "comments": [],
+            }
+            issue_dir = repo / ".contextos" / "audit" / "issues" / "10"
+            issue_dir.mkdir(parents=True)
+            (issue_dir / "issue.json").write_text(json.dumps(raw), encoding="utf-8")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    ["--repo", str(repo), "issue-status", "10"]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("# ContextOS issue status", output)
+            self.assertIn("- Freshness: FRESH", output)
+            self.assertIn("- Approval state: reviewed", output)
+            self.assertIn("human approval required", output)
+
+    def test_issue_report_accepts_positional_issue_number(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "issue-report",
+                        "11",
+                        "--tests-run",
+                        "unit tests",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("# Cursor execution report", output)
+            self.assertIn("GitHub issue comment: not requested", output)
+            self.assertIn("Issue #11", output)
+
 
 class ExportLastPlanTests(unittest.TestCase):
     def write_execution_result(self, path: Path, task_name: str) -> None:
