@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -310,7 +311,97 @@ def unauthorized_file_reason(path: str) -> str:
     return f"unauthorized file: {path} (not under allowed_paths)"
 
 
-def verify(session_path: Path, policy_path: Path, repo: Path) -> int:
+def utc_timestamp() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def markdown_list(items: Iterable[str]) -> str:
+    rendered_items = list(items)
+    if not rendered_items:
+        return "- (none)"
+    return "\n".join(f"- {item}" for item in rendered_items)
+
+
+def markdown_code_block(lines: Iterable[str]) -> str:
+    rendered_lines = list(lines)
+    body = "\n".join(rendered_lines) if rendered_lines else "(none)"
+    return f"```text\n{body}\n```"
+
+
+def render_audit_report(
+    *,
+    timestamp: str,
+    repo: Path,
+    expected_branch: str | None,
+    actual_branch: str,
+    changed_paths: Sequence[str],
+    allowed_paths: Sequence[str],
+    violations: Sequence[str],
+    status_summary: Sequence[str],
+) -> str:
+    return "\n".join(
+        [
+            "# Verification Audit Report",
+            "",
+            f"- Timestamp: {timestamp}",
+            f"- Repo: {repo}",
+            f"- Branch: {actual_branch}",
+            f"- Expected Branch: {expected_branch or '(not specified)'}",
+            "",
+            "## Changed Files",
+            markdown_list(changed_paths),
+            "",
+            "## Allowed Files",
+            markdown_list(allowed_paths),
+            "",
+            "## Violations",
+            markdown_list(violations),
+            "",
+            "## Git Status Summary",
+            markdown_code_block(status_summary),
+            "",
+        ]
+    )
+
+
+def write_audit_report(
+    *,
+    path: Path,
+    repo: Path,
+    expected_branch: str | None,
+    actual_branch: str,
+    changed_paths: Sequence[str],
+    allowed_paths: Sequence[str],
+    violations: Sequence[str],
+    status_summary: Sequence[str],
+) -> None:
+    report = render_audit_report(
+        timestamp=utc_timestamp(),
+        repo=repo,
+        expected_branch=expected_branch,
+        actual_branch=actual_branch,
+        changed_paths=changed_paths,
+        allowed_paths=allowed_paths,
+        violations=violations,
+        status_summary=status_summary,
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(report, encoding="utf-8")
+    except OSError as error:
+        raise VerificationError(
+            f"could not write audit report {path}: {error}"
+        ) from error
+
+
+def verify(
+    session_path: Path, policy_path: Path, repo: Path, report_path: Path | None = None
+) -> int:
     session = load_session(session_path)
     policy = load_policy(policy_path)
 
@@ -321,6 +412,8 @@ def verify(session_path: Path, policy_path: Path, repo: Path) -> int:
     status_entries = parse_git_status_z(raw_status)
     changed_paths = changed_paths_from_status(status_entries)
     changed_paths.update(changed_paths_from_diff(diff_output))
+    sorted_changed_paths = sorted(changed_paths)
+    status_summary = render_status_entries(status_entries)
 
     disallowed_paths = sorted(
         path for path in changed_paths if not is_allowed(path, policy.allowed_paths)
@@ -345,12 +438,25 @@ def verify(session_path: Path, policy_path: Path, repo: Path) -> int:
     print_section("allowed paths:", policy.allowed_paths)
     print_section(
         "$ git status --porcelain=v1 -z:",
-        render_status_entries(status_entries),
+        status_summary,
     )
     print_section(
         "$ git diff --name-only:",
         sorted(changed_paths_from_diff(diff_output)),
     )
+
+    if report_path is not None:
+        write_audit_report(
+            path=report_path,
+            repo=repo,
+            expected_branch=session.expected_branch,
+            actual_branch=actual_branch,
+            changed_paths=sorted_changed_paths,
+            allowed_paths=policy.allowed_paths,
+            violations=mismatch_reasons,
+            status_summary=status_summary,
+        )
+        print(f"audit report: {report_path}")
 
     if mismatch_reasons:
         print()
@@ -388,6 +494,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="path to the git repository (default: current working directory)",
     )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="write a markdown audit report to this path",
+    )
     return parser
 
 
@@ -396,7 +507,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        return verify(args.session, args.policy, args.repo)
+        return verify(args.session, args.policy, args.repo, args.report)
     except VerificationError as error:
         print(f"verification: ERROR: {error}", file=sys.stderr)
         return 2

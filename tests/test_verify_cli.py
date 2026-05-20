@@ -60,12 +60,40 @@ class PathMatchingTests(unittest.TestCase):
         self.assertFalse(verify_cli.is_allowed("README.md.bak", allowed_paths))
 
 
+class AuditReportTests(unittest.TestCase):
+    def test_render_audit_report_includes_required_sections(self) -> None:
+        report = verify_cli.render_audit_report(
+            timestamp="2026-05-20T02:48:00Z",
+            repo=Path("/repo"),
+            expected_branch="main",
+            actual_branch="feature",
+            changed_paths=["README.md", "src/app.py"],
+            allowed_paths=["README.md"],
+            violations=["branch mismatch: expected main, actual feature"],
+            status_summary=[" M README.md"],
+        )
+
+        self.assertIn("# Verification Audit Report", report)
+        self.assertIn("- Timestamp: 2026-05-20T02:48:00Z", report)
+        self.assertIn("- Repo: /repo", report)
+        self.assertIn("- Branch: feature", report)
+        self.assertIn("- Expected Branch: main", report)
+        self.assertIn("## Changed Files\n- README.md\n- src/app.py", report)
+        self.assertIn("## Allowed Files\n- README.md", report)
+        self.assertIn(
+            "## Violations\n- branch mismatch: expected main, actual feature",
+            report,
+        )
+        self.assertIn("## Git Status Summary\n```text\n M README.md\n```", report)
+
+
 class VerifyCliIntegrationTests(unittest.TestCase):
     def test_fails_when_status_contains_disallowed_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
             git_init(repo)
             actual_branch = git_current_branch(repo)
+            report_path = repo / "audit.md"
 
             (repo / "session.json").write_text(
                 f'{{"expected_branch":"{actual_branch}"}}\n',
@@ -92,6 +120,8 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                         str(repo / "policy.yaml"),
                         "--repo",
                         str(repo),
+                        "--report",
+                        str(report_path),
                     ]
                 )
 
@@ -110,6 +140,26 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                 f"verification: {verify_cli.RED}FAILED{verify_cli.RESET}",
                 output,
             )
+            self.assertIn(f"audit report: {report_path}", output)
+
+            report = report_path.read_text(encoding="utf-8")
+            self.assertRegex(
+                report,
+                r"- Timestamp: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+            )
+            self.assertIn(f"- Repo: {repo}", report)
+            self.assertIn(f"- Branch: {actual_branch}", report)
+            self.assertIn("## Changed Files", report)
+            self.assertIn("- secret.txt", report)
+            self.assertIn("## Allowed Files", report)
+            self.assertIn("- src", report)
+            self.assertIn("## Violations", report)
+            self.assertIn(
+                "- unauthorized file: secret.txt (not under allowed_paths)",
+                report,
+            )
+            self.assertIn("## Git Status Summary", report)
+            self.assertIn("?? secret.txt", report)
 
     def test_fails_when_expected_branch_does_not_match_actual_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
