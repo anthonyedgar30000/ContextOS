@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -35,6 +36,16 @@ def git_current_branch(repo: Path) -> str:
     ).stdout.strip()
 
 
+def git_head_hash(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+
+
 def configure_git_identity(repo: Path) -> None:
     subprocess.run(
         ["git", "config", "user.email", "tests@example.com"],
@@ -45,6 +56,17 @@ def configure_git_identity(repo: Path) -> None:
         ["git", "config", "user.name", "Verification Tests"],
         cwd=repo,
         check=True,
+    )
+
+
+def git_commit_all(repo: Path, message: str) -> None:
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
 
 
@@ -193,6 +215,150 @@ class PreCommitHookTests(unittest.TestCase):
 
 
 class VerifyCliIntegrationTests(unittest.TestCase):
+    def test_fails_when_session_context_branch_and_head_are_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            configure_git_identity(repo)
+            (repo / "README.md").write_text("# Repo\n", encoding="utf-8")
+            git_commit_all(repo, "initial commit")
+            actual_branch = git_current_branch(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - .contextos/session_context.json\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+            (repo / ".contextos").mkdir()
+            (repo / ".contextos" / "session_context.json").write_text(
+                json.dumps(
+                    {
+                        "branch": "feature/clientA",
+                        "git_head_hash": "0" * 40,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn("CONTEXT STALE", output)
+            self.assertIn(
+                f"- branch switched from feature/clientA to {actual_branch}",
+                output,
+            )
+            self.assertIn("- HEAD changed since context ingestion", output)
+            self.assertIn("Suggested remediation:", output)
+            self.assertIn("1. regenerate context packet", output)
+            self.assertIn("2. run contextos ingest again", output)
+
+    def test_fails_when_local_branch_is_behind_remote_tracking_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "repo"
+            remote = Path(temp_dir) / "remote.git"
+            repo.mkdir()
+            git_init(repo)
+            configure_git_identity(repo)
+            (repo / "README.md").write_text("# Repo\n", encoding="utf-8")
+            git_commit_all(repo, "initial commit")
+            subprocess.run(
+                ["git", "init", "--bare", str(remote)],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["git", "remote", "add", "origin", str(remote)],
+                cwd=repo,
+                check=True,
+            )
+            branch = git_current_branch(repo)
+            subprocess.run(
+                ["git", "push", "-u", "origin", branch],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            initial_head = git_head_hash(repo)
+
+            (repo / "remote-change.txt").write_text("remote\n", encoding="utf-8")
+            git_commit_all(repo, "remote change")
+            subprocess.run(
+                ["git", "push", "origin", branch],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["git", "reset", "--hard", initial_head],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - .contextos/session_context.json\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+            (repo / ".contextos").mkdir()
+            (repo / ".contextos" / "session_context.json").write_text(
+                json.dumps(
+                    {
+                        "branch": branch,
+                        "git_head_hash": initial_head,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn("CONTEXT STALE", output)
+            self.assertIn(
+                f"- local branch is behind origin/{branch} by 1 commit",
+                output,
+            )
+
     def test_fails_when_status_contains_disallowed_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)

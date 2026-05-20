@@ -57,6 +57,24 @@ explicit mismatch reasons, and unauthorized files. When `--report` is provided,
 the CLI writes a markdown audit report containing a UTC timestamp, repo, branch,
 changed files, allowed files, violations, and git status summary.
 
+When `.contextos/session_context.json` exists, the verification CLI also checks
+that the current branch and Git HEAD still match the ingested context, and that
+the local branch is not behind its configured remote-tracking branch. Stale
+context fails verification with deterministic remediation steps:
+
+```text
+CONTEXT STALE
+Reason:
+
+- branch switched from feature/clientA to main
+- HEAD changed since context ingestion
+
+Suggested remediation:
+
+1. regenerate context packet
+2. run contextos ingest again
+```
+
 Enable the tracked pre-commit hook to run verification before each commit:
 
 ```sh

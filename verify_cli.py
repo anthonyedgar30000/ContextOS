@@ -34,6 +34,12 @@ class Session:
 
 
 @dataclass(frozen=True)
+class SessionContext:
+    branch: str
+    git_head_hash: str
+
+
+@dataclass(frozen=True)
 class GitStatusEntry:
     code: str
     path: str
@@ -191,6 +197,41 @@ def load_policy(path: Path) -> Policy:
         raise VerificationError(f"policy file not found: {path}") from error
 
 
+def parse_session_context_json(data: object) -> SessionContext:
+    if not isinstance(data, dict):
+        raise VerificationError("session_context.json must contain a JSON object")
+
+    branch = data.get("branch")
+    if not isinstance(branch, str) or not branch.strip():
+        raise VerificationError(
+            "session_context.json branch must be a non-empty string"
+        )
+
+    git_head_hash = data.get("git_head_hash")
+    if not isinstance(git_head_hash, str) or not git_head_hash.strip():
+        raise VerificationError(
+            "session_context.json git_head_hash must be a non-empty string"
+        )
+
+    return SessionContext(
+        branch=branch.strip(),
+        git_head_hash=git_head_hash.strip(),
+    )
+
+
+def load_session_context(path: Path) -> SessionContext | None:
+    if not path.exists():
+        return None
+
+    try:
+        return parse_session_context_json(json.loads(path.read_text(encoding="utf-8")))
+    except json.JSONDecodeError as error:
+        raise VerificationError(
+            "session_context.json is not valid JSON: "
+            f"{path}:{error.lineno}:{error.colno}"
+        ) from error
+
+
 def run_git(args: Sequence[str], repo: Path, *, binary: bool = False) -> str | bytes:
     command = ["git", *args]
     completed = subprocess.run(
@@ -214,9 +255,67 @@ def run_git(args: Sequence[str], repo: Path, *, binary: bool = False) -> str | b
     return completed.stdout
 
 
+def repo_root(repo: Path) -> Path:
+    return Path(run_git(["rev-parse", "--show-toplevel"], repo).strip())
+
+
 def current_branch(repo: Path) -> str:
     branch = run_git(["branch", "--show-current"], repo).strip()
     return branch or "(detached HEAD)"
+
+
+def git_head_hash(repo: Path) -> str:
+    return run_git(["rev-parse", "HEAD"], repo).strip()
+
+
+def try_run_git(args: Sequence[str], repo: Path) -> str | None:
+    command = ["git", *args]
+    completed = subprocess.run(
+        command,
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip()
+
+
+def upstream_branch(repo: Path) -> str | None:
+    return try_run_git(
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        repo,
+    )
+
+
+def local_branch_behind_reason(repo: Path) -> str | None:
+    upstream = upstream_branch(repo)
+    if upstream is None:
+        return None
+
+    counts = try_run_git(
+        ["rev-list", "--left-right", "--count", f"HEAD...{upstream}"],
+        repo,
+    )
+    if counts is None:
+        return None
+
+    parts = counts.split()
+    if len(parts) != 2:
+        raise VerificationError(f"unexpected git rev-list output: {counts!r}")
+
+    try:
+        behind_count = int(parts[1])
+    except ValueError as error:
+        raise VerificationError(f"unexpected git rev-list output: {counts!r}") from error
+
+    if behind_count == 0:
+        return None
+
+    commit_label = "commit" if behind_count == 1 else "commits"
+    return f"local branch is behind {upstream} by {behind_count} {commit_label}"
 
 
 def parse_git_status_z(raw_status: bytes) -> list[GitStatusEntry]:
@@ -311,6 +410,42 @@ def unauthorized_file_reason(path: str) -> str:
     return f"unauthorized file: {path} (not under allowed_paths)"
 
 
+def session_stale_reasons(
+    *,
+    session_context: SessionContext | None,
+    actual_branch: str,
+    actual_head_hash: str,
+    behind_reason: str | None,
+) -> list[str]:
+    reasons = []
+    if session_context is not None:
+        if session_context.branch != actual_branch:
+            reasons.append(
+                f"branch switched from {session_context.branch} to {actual_branch}"
+            )
+        if session_context.git_head_hash != actual_head_hash:
+            reasons.append("HEAD changed since context ingestion")
+
+    if behind_reason is not None:
+        reasons.append(behind_reason)
+
+    return reasons
+
+
+def print_context_stale(reasons: Sequence[str]) -> None:
+    print()
+    print("CONTEXT STALE")
+    print("Reason:")
+    print()
+    for reason in reasons:
+        print(f"- {reason}")
+    print()
+    print("Suggested remediation:")
+    print()
+    print("1. regenerate context packet")
+    print("2. run contextos ingest again")
+
+
 def utc_timestamp() -> str:
     return (
         datetime.now(timezone.utc)
@@ -343,6 +478,7 @@ def render_audit_report(
     allowed_paths: Sequence[str],
     violations: Sequence[str],
     status_summary: Sequence[str],
+    stale_reasons: Sequence[str] = (),
 ) -> str:
     return "\n".join(
         [
@@ -362,6 +498,9 @@ def render_audit_report(
             "## Violations",
             markdown_list(violations),
             "",
+            "## Context Freshness",
+            markdown_list(stale_reasons),
+            "",
             "## Git Status Summary",
             markdown_code_block(status_summary),
             "",
@@ -379,6 +518,7 @@ def write_audit_report(
     allowed_paths: Sequence[str],
     violations: Sequence[str],
     status_summary: Sequence[str],
+    stale_reasons: Sequence[str] = (),
 ) -> None:
     report = render_audit_report(
         timestamp=utc_timestamp(),
@@ -389,6 +529,7 @@ def write_audit_report(
         allowed_paths=allowed_paths,
         violations=violations,
         status_summary=status_summary,
+        stale_reasons=stale_reasons,
     )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -400,14 +541,34 @@ def write_audit_report(
 
 
 def verify(
-    session_path: Path, policy_path: Path, repo: Path, report_path: Path | None = None
+    session_path: Path,
+    policy_path: Path,
+    repo: Path,
+    report_path: Path | None = None,
+    session_context_path: Path | None = None,
 ) -> int:
     session = load_session(session_path)
     policy = load_policy(policy_path)
 
-    actual_branch = current_branch(repo)
-    raw_status = run_git(["status", "--porcelain=v1", "-z"], repo, binary=True)
-    diff_output = run_git(["diff", "--name-only"], repo)
+    actual_repo_root = repo_root(repo)
+    actual_branch = current_branch(actual_repo_root)
+    if session_context_path is None:
+        session_context_path = actual_repo_root / ".contextos" / "session_context.json"
+    session_context = load_session_context(session_context_path)
+    actual_head_hash = git_head_hash(actual_repo_root) if session_context else ""
+    stale_reasons = session_stale_reasons(
+        session_context=session_context,
+        actual_branch=actual_branch,
+        actual_head_hash=actual_head_hash,
+        behind_reason=local_branch_behind_reason(actual_repo_root),
+    )
+
+    raw_status = run_git(
+        ["status", "--porcelain=v1", "-z"],
+        actual_repo_root,
+        binary=True,
+    )
+    diff_output = run_git(["diff", "--name-only"], actual_repo_root)
 
     status_entries = parse_git_status_z(raw_status)
     changed_paths = changed_paths_from_status(status_entries)
@@ -427,7 +588,8 @@ def verify(
 
     print(f"session: {session_path}")
     print(f"policy: {policy_path}")
-    print(f"repo: {repo}")
+    print(f"repo: {actual_repo_root}")
+    print(f"session context: {session_context_path}")
     print_section(
         "branch:",
         [
@@ -448,15 +610,20 @@ def verify(
     if report_path is not None:
         write_audit_report(
             path=report_path,
-            repo=repo,
+            repo=actual_repo_root,
             expected_branch=session.expected_branch,
             actual_branch=actual_branch,
             changed_paths=sorted_changed_paths,
             allowed_paths=policy.allowed_paths,
-            violations=mismatch_reasons,
+            violations=[*stale_reasons, *mismatch_reasons],
             status_summary=status_summary,
+            stale_reasons=stale_reasons,
         )
         print(f"audit report: {report_path}")
+
+    if stale_reasons:
+        print_context_stale(stale_reasons)
+        return 1
 
     if mismatch_reasons:
         print()
@@ -499,6 +666,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="write a markdown audit report to this path",
     )
+    parser.add_argument(
+        "--session-context",
+        type=Path,
+        help=(
+            "path to session_context.json "
+            "(default: <repo>/.contextos/session_context.json)"
+        ),
+    )
     return parser
 
 
@@ -507,7 +682,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        return verify(args.session, args.policy, args.repo, args.report)
+        return verify(
+            args.session,
+            args.policy,
+            args.repo,
+            args.report,
+            args.session_context,
+        )
     except VerificationError as error:
         print(f"verification: ERROR: {error}", file=sys.stderr)
         return 2
