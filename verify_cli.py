@@ -650,6 +650,21 @@ def validate_exotic_pickle_assets(repo_root: Path) -> list[str]:
     return []
 
 
+def requires_exotic_pickle_assets(allowed_paths: Sequence[str]) -> bool:
+    asset_scopes = {
+        "assets",
+        "assets/",
+        "assets/**",
+        "assets/exotic-pickles",
+        "assets/exotic-pickles/",
+        "assets/exotic-pickles/**",
+    }
+    return any(
+        path in asset_scopes or path.startswith("assets/exotic-pickles/")
+        for path in allowed_paths
+    )
+
+
 def verify(
     session_path: Path,
     policy_path: Path,
@@ -702,7 +717,11 @@ def verify(
         policy.protected_paths,
     )
     rendered_protected_violations = render_protected_violations(protected_violations)
-    asset_violations = validate_exotic_pickle_assets(actual_repo_root)
+    asset_violations = (
+        validate_exotic_pickle_assets(actual_repo_root)
+        if requires_exotic_pickle_assets(policy.allowed_paths)
+        else []
+    )
 
     disallowed_paths = sorted(
         path for path in changed_paths if not is_allowed(path, policy.allowed_paths)

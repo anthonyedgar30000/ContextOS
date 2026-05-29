@@ -705,6 +705,76 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                 output,
             )
 
+    def test_exotic_pickle_asset_scope_requires_image_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - assets\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn(
+                "CONTEXTOS BLOCK: Cannot deploy Exotic Pickles section because "
+                "required image directory is missing: assets/exotic-pickles/",
+                stdout.getvalue(),
+            )
+
+    def test_exotic_pickle_asset_scope_passes_with_image_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - assets/**\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+            asset_dir = repo / "assets" / "exotic-pickles"
+            asset_dir.mkdir(parents=True)
+            (asset_dir / "hero.png").write_bytes(b"image\n")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn(
+                f"verification: {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                stdout.getvalue(),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
