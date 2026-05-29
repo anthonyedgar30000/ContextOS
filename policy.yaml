@@ -14,5 +14,6 @@ allowed_paths:
   - .gitignore
   - session.json
   - policy.yaml
+  - project_plan.yaml
 protected_paths:
   - deploy/**
