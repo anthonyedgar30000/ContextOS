@@ -747,7 +747,7 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             (repo / "session.json").write_text("{}\n", encoding="utf-8")
             (repo / "policy.yaml").write_text(
                 "allowed_paths:\n"
-                "  - assets/**\n"
+                "  - assets\n"
                 "  - policy.yaml\n"
                 "  - session.json\n",
                 encoding="utf-8",
