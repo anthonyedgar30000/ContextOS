@@ -1,0 +1,18 @@
+allowed_paths:
+  - .github
+  - README.md
+  - docs/**
+  - tests/**
+  - demos/**
+  - verify_cli.py
+  - contextos.py
+  - contextos
+  - install_hooks.py
+  - git_command_explanations.py
+  - .githooks/**
+  - .contextos/**
+  - .gitignore
+  - session.json
+  - policy.yaml
+protected_paths:
+  - deploy/**

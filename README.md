@@ -216,13 +216,71 @@ passed or failed.
   execution boundary constraints.
 - The audit report records local verification results, not a signed attestation.
 
+## CI/CD and Governance Enforcement
+
+ContextOS uses a minimal GitHub Actions workflow to run the same deterministic
+verification CLI that local hooks and developers use before commit.
+
+### Pull Request workflow
+
+1. Open a feature branch from `main`.
+2. Commit changes that stay within the paths declared in `policy.yaml`.
+3. Push the branch and open a pull request against `main`.
+4. GitHub Actions runs `.github/workflows/contextos-ci.yml` on every pull
+   request and on every push to any branch.
+5. Review the workflow result before merge. A failed verification run blocks
+   merging once branch protection is enabled.
+
+### Verification requirements
+
+The CI job checks out the repository, sets up Python, optionally installs
+`requirements.txt` when that file exists, and runs:
+
+```sh
+python3 verify_cli.py --session session.json --policy policy.yaml --protected-mode enforce
+```
+
+Repositories that use this workflow must keep both governance files at the
+repository root:
+
+- `session.json` — optional `expected_branch` and other session metadata
+- `policy.yaml` — required `allowed_paths` and optional `protected_paths`
+
+Verification fails the workflow when:
+
+- either governance file is missing or invalid
+- the current branch does not match `expected_branch` in `session.json`
+- working-tree or unstaged changes fall outside `allowed_paths`
+- staged changes match a `protected_paths` pattern while `--protected-mode enforce` is set
+- repository-specific asset guardrails fail (for example, missing required assets)
+
+A clean checkout with no policy violations should report `verification: PASSED`.
+
+### Why direct commits to main are discouraged
+
+`main` is the integration branch for reviewed, verified changes. Direct commits
+bypass pull-request review and automated verification, which makes it easier for
+stale execution context, unauthorized paths, or protected-path touches to reach
+the default branch without an auditable gate. Feature branches plus pull requests
+keep ContextOS boundary checks visible before merge.
+
+### Future branch protection requirements
+
+Teams should enable GitHub branch protection on `main` with settings such as:
+
+- require a pull request before merging
+- require status checks to pass, including the ContextOS CI workflow
+- require branches to be up to date before merging
+- disallow force pushes and deletions on `main`
+
+These settings are not enforced by the workflow file itself; they are repository
+configuration steps that complete the governance model described here.
+
 ## Future work
 
 - Share YAML parsing helpers between `contextos.py` and `verify_cli.py`.
 - Add optional machine-readable verification output.
 - Add richer policy modes for branch-specific or task-specific protected paths.
-- Add examples for CI usage while keeping local verification as the primary
-  workflow.
 - Add report hashing or signing for teams that need stronger provenance.
 
 ## Demos
