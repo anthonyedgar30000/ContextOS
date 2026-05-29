@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Minimal deterministic verification CLI.
 
-The CLI reads a session JSON file and a small policy YAML file, inspects the
-current git working tree, and fails if any changed file is outside the policy's
-allowed paths.
+The CLI optionally reads a session JSON file and always reads a small policy
+YAML file, inspects the current git working tree, and fails if any changed file
+is outside the policy's allowed paths.
 """
 
 from __future__ import annotations
@@ -651,7 +651,7 @@ def validate_exotic_pickle_assets(repo_root: Path) -> list[str]:
 
 
 def verify(
-    session_path: Path,
+    session_path: Path | None,
     policy_path: Path,
     repo: Path,
     report_path: Path | None = None,
@@ -663,7 +663,7 @@ def verify(
             "protected mode must be either 'advisory' or 'enforce'"
         )
 
-    session = load_session(session_path)
+    session = load_session(session_path) if session_path is not None else Session()
     policy = load_policy(policy_path)
 
     actual_repo_root = repo_root(repo)
@@ -718,7 +718,7 @@ def verify(
         rendered_protected_violations if protected_mode == "enforce" else []
     )
 
-    print(f"session: {session_path}")
+    print(f"session: {session_path if session_path is not None else '(not provided)'}")
     print(f"policy: {policy_path}")
     print(f"repo: {actual_repo_root}")
     print(f"session context: {session_context_path}")
@@ -807,9 +807,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--session",
-        default="session.json",
         type=Path,
-        help="path to session.json (default: session.json)",
+        help="path to session.json (optional; validates expected_branch when provided)",
     )
     parser.add_argument(
         "--policy",

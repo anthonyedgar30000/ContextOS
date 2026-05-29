@@ -239,6 +239,67 @@ class PreCommitHookTests(unittest.TestCase):
 
 
 class VerifyCliIntegrationTests(unittest.TestCase):
+    def test_passes_without_session_when_session_argument_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - assets\n"
+                "  - policy.yaml\n",
+                encoding="utf-8",
+            )
+            (repo / "assets" / "exotic-pickles").mkdir(parents=True)
+            (repo / "assets" / "exotic-pickles" / "pickle.png").write_bytes(b"png")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("session: (not provided)", output)
+            self.assertIn("expected: (not specified)", output)
+            self.assertIn(
+                f"verification: {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
+
+    def test_fails_when_explicit_session_path_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - policy.yaml\n",
+                encoding="utf-8",
+            )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("session file not found", stderr.getvalue())
+
     def test_warns_for_protected_staged_paths_in_advisory_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
