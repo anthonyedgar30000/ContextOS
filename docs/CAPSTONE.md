@@ -386,3 +386,17 @@ ContextOS is:
 
 > A lightweight deterministic execution-boundary layer for AI-assisted
 > development workflows.
+
+
+## Evaluation Results
+
+The ContextOS prototype was evaluated against several execution-boundary validation scenarios.
+
+| Test Scenario               | Expected Result      | Observed Result      | Outcome |
+| --------------------------- | -------------------- | -------------------- | ------- |
+| Branch mismatch             | Verification failure | Verification failure | Pass    |
+| HEAD divergence             | Verification failure | Verification failure | Pass    |
+| Protected path modification | Commit blocked       | Commit blocked       | Pass    |
+| In-scope modification       | Commit allowed       | Commit allowed       | Pass    |
+
+The evaluation demonstrated that ContextOS consistently detected repository-state deviations from reviewed execution context. In all test scenarios, the prototype produced the expected outcome and prevented unauthorized execution outside the declared boundary.
