@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Minimal deterministic verification CLI.
 
-The CLI reads a session JSON file and a small policy YAML file, inspects the
-current git working tree, and fails if any changed file is outside the policy's
-allowed paths.
+The CLI optionally reads a session JSON file and always reads a small policy
+YAML file, inspects the current git working tree, and fails if any changed file
+is outside the policy's allowed paths.
 """
 
 from __future__ import annotations
