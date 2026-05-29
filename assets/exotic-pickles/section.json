@@ -1,0 +1,22 @@
+{
+  "section": "Exotic Pickles",
+  "slug": "exotic-pickles",
+  "headline": "Small-batch pickle flights with global crunch.",
+  "description": "A rotating Jilly Pickles showcase for adventurous jars, bright brines, and limited-run flavor pairings.",
+  "heroImage": "assets/exotic-pickles/hero.png",
+  "featuredItems": [
+    {
+      "name": "Yuzu Kosho Spears",
+      "profile": "Citrus heat, cucumber snap, sea-salt finish"
+    },
+    {
+      "name": "Saffron Garlic Coins",
+      "profile": "Warm aromatics with a mellow garlic brine"
+    },
+    {
+      "name": "Tamarind Chile Chips",
+      "profile": "Sweet-sour tang with a slow chile build"
+    }
+  ],
+  "deploymentStatus": "ready"
+}
