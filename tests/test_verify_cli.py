@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import verify_cli
 
@@ -544,6 +545,57 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             self.assertIn(f"- session created on {branch}", output)
             self.assertIn("- current branch is (detached HEAD)", output)
             self.assertIn("- current repository is in detached HEAD state", output)
+
+    def test_passes_when_detached_head_in_github_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            configure_git_identity(repo)
+            (repo / "README.md").write_text("# Repo\n", encoding="utf-8")
+            git_commit_all(repo, "initial commit")
+            head_hash = git_head_hash(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+            git_commit_all(repo, "add governance files")
+            head_hash = git_head_hash(repo)
+            subprocess.run(
+                ["git", "checkout", "--detach", head_hash],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                    exit_code = verify_cli.main(
+                        [
+                            "--session",
+                            str(repo / "session.json"),
+                            "--policy",
+                            str(repo / "policy.yaml"),
+                            "--repo",
+                            str(repo),
+                            "--session-context",
+                            str(repo / ".contextos" / "missing_session_context.json"),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("CONTEXT FRESH", output)
+            self.assertIn("- detached HEAD allowed in CI", output)
+            self.assertNotIn("CONTEXT DIVERGED", output)
+            self.assertNotIn(
+                "- current repository is in detached HEAD state", output
+            )
 
     def test_fails_when_status_contains_disallowed_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

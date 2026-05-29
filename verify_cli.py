@@ -12,6 +12,7 @@ import argparse
 import csv
 import fnmatch
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -472,6 +473,10 @@ def unauthorized_file_reason(path: str) -> str:
     return f"unauthorized file: {path} (not under allowed_paths)"
 
 
+def is_github_actions() -> bool:
+    return os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+
+
 def context_freshness(
     *,
     session_context: SessionContext | None,
@@ -481,24 +486,32 @@ def context_freshness(
 ) -> ContextFreshness:
     reasons = []
     is_detached = actual_branch == "(detached HEAD)"
-    if session_context is not None:
-        if session_context.branch != actual_branch:
-            reasons.append(f"session created on {session_context.branch}")
-            reasons.append(f"current branch is {actual_branch}")
-        if session_context.git_head_hash != actual_head_hash:
-            reasons.append("HEAD changed after ingestion")
+    ci_allows_detached = is_github_actions() and is_detached
+    branch_mismatch = (
+        session_context is not None and session_context.branch != actual_branch
+    )
+    head_mismatch = (
+        session_context is not None
+        and session_context.git_head_hash != actual_head_hash
+    )
+
+    if branch_mismatch:
+        reasons.append(f"session created on {session_context.branch}")
+        reasons.append(f"current branch is {actual_branch}")
+    if head_mismatch:
+        reasons.append("HEAD changed after ingestion")
 
     if is_detached:
-        reasons.append("current repository is in detached HEAD state")
+        if ci_allows_detached:
+            reasons.append("detached HEAD allowed in CI")
+        else:
+            reasons.append("current repository is in detached HEAD state")
     if behind_reason is not None:
         reasons.append(behind_reason)
 
-    if is_detached:
+    if is_detached and not ci_allows_detached:
         classification = "DIVERGED"
-    elif session_context is not None and (
-        session_context.branch != actual_branch
-        or session_context.git_head_hash != actual_head_hash
-    ):
+    elif head_mismatch or (branch_mismatch and not ci_allows_detached):
         classification = "STALE"
     elif behind_reason is not None:
         classification = "AGING"
