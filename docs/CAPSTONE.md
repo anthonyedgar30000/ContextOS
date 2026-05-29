@@ -71,6 +71,23 @@ original task boundary.
 ContextOS fills that gap by introducing explicit local contracts and checking
 them against Git before commit or push.
 
+
+
+
+
+## Requirements traceability
+
+| Requirement | Implementation Evidence | Validation Evidence |
+|------------|--------------------------|---------------------|
+| Verify branch context | `contextos ingest` records branch and `contextos verify` compares current branch | Branch mismatch test produced verification failure |
+| Verify HEAD freshness | `.contextos/session_context.json` records the ingested HEAD hash | HEAD divergence test produced verification failure |
+| Enforce allowed paths | `policy.yaml` defines allowed paths checked against Git diffs | Out-of-scope changes are reported as violations |
+| Protect sensitive paths | `protected_paths` are checked against staged files | Protected path modification was blocked |
+| Preserve local provenance | `--report` writes markdown audit output | Demo produces a local audit report |
+| Operate without external APIs | CLI uses local files and Git commands | GitHub, Cursor, and ChatGPT APIs are not required during verification |
+
+
+
 ## ContextOS design
 
 ContextOS is built around a local CLI command surface and a small set of local
