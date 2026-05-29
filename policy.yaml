@@ -1,0 +1,8 @@
+allowed_paths:
+  - assets
+  - assets/**
+  - session.json
+  - policy.yaml
+  - verify_cli.py
+protected_paths:
+  - deploy/**
