@@ -627,6 +627,29 @@ def write_audit_report(
         ) from error
 
 
+def validate_exotic_pickle_assets(repo_root: Path) -> list[str]:
+    exotic_dir = repo_root / "assets" / "exotic-pickles"
+    image_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+
+    if not exotic_dir.exists() or not exotic_dir.is_dir():
+        return [
+            "CONTEXTOS BLOCK: Cannot deploy Exotic Pickles section because required image directory is missing: assets/exotic-pickles/"
+        ]
+
+    image_files = [
+        path
+        for path in exotic_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in image_extensions
+    ]
+
+    if not image_files:
+        return [
+            "CONTEXTOS BLOCK: Cannot deploy Exotic Pickles section because required image assets are missing from assets/exotic-pickles/"
+        ]
+
+    return []
+
+
 def verify(
     session_path: Path,
     policy_path: Path,
@@ -679,6 +702,7 @@ def verify(
         policy.protected_paths,
     )
     rendered_protected_violations = render_protected_violations(protected_violations)
+    asset_violations = validate_exotic_pickle_assets(actual_repo_root)
 
     disallowed_paths = sorted(
         path for path in changed_paths if not is_allowed(path, policy.allowed_paths)
@@ -689,6 +713,7 @@ def verify(
         if reason is not None
     ]
     mismatch_reasons.extend(unauthorized_file_reason(path) for path in disallowed_paths)
+    mismatch_reasons.extend(asset_violations)
     protected_block_reasons = (
         rendered_protected_violations if protected_mode == "enforce" else []
     )
