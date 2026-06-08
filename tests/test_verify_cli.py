@@ -140,6 +140,23 @@ class PathMatchingTests(unittest.TestCase):
             ],
         )
 
+    def test_protected_path_directories_match_child_paths(self) -> None:
+        violations = verify_cli.protected_path_violations(
+            ["database/schema.sql", ".github/workflows/deploy.yml"],
+            ["database", ".github/workflows"],
+        )
+
+        self.assertEqual(
+            verify_cli.render_protected_violations(violations),
+            [
+                (
+                    "protected path violation: .github/workflows/deploy.yml "
+                    "matches .github/workflows"
+                ),
+                "protected path violation: database/schema.sql matches database",
+            ],
+        )
+
 
 class AuditReportTests(unittest.TestCase):
     def test_render_audit_report_includes_required_sections(self) -> None:

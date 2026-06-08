@@ -1,0 +1,23 @@
+task_id: CTX-DEMO-001
+project: LineAlert
+objective: Update frontend UI copy and dashboard cards only
+expected_branch: main
+allowed_paths:
+  - src/components/
+  - src/pages/
+  - src/styles/
+protected_paths:
+  - auth/
+  - database/
+  - .env
+  - .github/workflows/
+  - deployment/
+success_criteria:
+  - UI text updated
+  - dashboard cards render correctly
+  - no backend, auth, database, or deployment files changed
+assumptions:
+  - work is limited to frontend presentation
+risks:
+  - accidental backend or deployment edits would exceed approved scope
+human_approval_required: true

@@ -135,6 +135,73 @@ class ContextosIngestTests(unittest.TestCase):
             self.assertEqual(session_context["branch"], branch)
             self.assertEqual(session_context["allowed_paths"], ["README.md", "src"])
 
+    def test_ingest_accepts_intent_contract_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "LineAlert"
+            repo.mkdir()
+            prepare_repo(repo)
+            branch = git_current_branch(repo)
+            packet_path = repo / "intent_contract.yaml"
+            packet_path.write_text(
+                "task_id: CTX-DEMO-001\n"
+                "project: LineAlert\n"
+                "objective: Update frontend UI copy and dashboard cards only\n"
+                f"expected_branch: {branch}\n"
+                "allowed_paths:\n"
+                "  - src/components/\n"
+                "  - src/pages/\n"
+                "protected_paths:\n"
+                "  - database/\n"
+                "  - .github/workflows/\n"
+                "success_criteria:\n"
+                "  - dashboard cards render correctly\n"
+                "assumptions:\n"
+                "  - work is limited to frontend presentation\n"
+                "risks:\n"
+                "  - accidental backend edits would exceed approved scope\n"
+                "human_approval_required: true\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "ingest",
+                        str(packet_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("contract type: intent_contract.yaml", output)
+            self.assertIn("contextos ingest: PASSED", output)
+
+            session_context = json.loads(
+                (repo / ".contextos" / "session_context.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                session_context["task"],
+                "Update frontend UI copy and dashboard cards only",
+            )
+            self.assertEqual(
+                session_context["allowed_paths"],
+                ["src/components", "src/pages"],
+            )
+
+            self.assertEqual(
+                json.loads((repo / "session.json").read_text(encoding="utf-8")),
+                {"expected_branch": branch},
+            )
+            self.assertIn(
+                "protected_paths:\n  - database\n  - .github/workflows\n",
+                (repo / "policy.yaml").read_text(encoding="utf-8"),
+            )
+
     def test_ingest_fails_clearly_when_repo_mismatches(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir) / "ContextOS"
@@ -253,6 +320,48 @@ class ContextosVerifyTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertIn("CONTEXT FRESH", stdout.getvalue())
             self.assertIn("verification:", stdout.getvalue())
+
+    def test_verify_report_flag_without_path_writes_default_audit_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            git_init(repo)
+            branch = git_current_branch(repo)
+            (repo / "session.json").write_text(
+                f'{{"expected_branch":"{branch}"}}\n',
+                encoding="utf-8",
+            )
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "verify",
+                        "--report",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            report_path = (
+                repo
+                / ".contextos"
+                / "audit"
+                / "verification_reports"
+                / "latest.md"
+            )
+            self.assertTrue(report_path.exists())
+            self.assertIn(
+                "## Intent Contract Scope Decision",
+                report_path.read_text(encoding="utf-8"),
+            )
 
 
 class ExplainGitTests(unittest.TestCase):

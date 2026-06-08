@@ -2,26 +2,27 @@
 
 ## Abstract
 
-ContextOS is a lightweight deterministic execution-boundary layer for
-AI-assisted development workflows. It converts reviewed task context into local
-execution contracts, validates those contracts against authoritative Git state,
-and blocks or reports mutations that fall outside the declared boundary. The
-system is intentionally local-first: it relies on files, Git commands, terminal
-output, and markdown reports rather than external services. Its purpose is to
-make branch context, file scope, protected paths, and provenance explicit before
-AI-assisted changes are committed or pushed.
+ContextOS is a local-first deterministic verifier for AI-assisted development
+scope assurance. It converts a reviewed Intent Contract into local execution
+inputs, validates those inputs against authoritative Git state, and blocks or
+reports mutations that fall outside the declared boundary. The system is
+intentionally local-first: it relies on files, Git commands, terminal output,
+and markdown reports rather than external services. Its purpose is to make
+branch context, HEAD provenance, file scope, protected paths, and human approval
+requirements explicit before AI-assisted changes are committed or pushed.
 
-ContextOS is not AGI governance, autonomous AI safety, or enterprise
-orchestration. It is a practical execution-boundary mechanism for everyday
-software development workflows that include AI-assisted edits.
+ContextOS is not AGI governance, autonomous AI safety, an enterprise governance
+platform, or orchestration. It is a practical execution-boundary verifier for
+everyday software development workflows that include Claude/Cursor edits.
 
 ## Problem statement
 
 AI-assisted development often begins with a reviewed task: a target repository,
-a branch, a file scope, and an expected implementation objective. During local
-work, the repository can move away from that reviewed context. A developer can
-switch branches, advance or rewind HEAD, stage unrelated files, or touch files
-that were never part of the reviewed scope.
+a branch, a file scope, protected paths, success criteria, assumptions, risks,
+and an expected implementation objective. ContextOS calls this reviewed boundary
+the Intent Contract. During local work, the repository can move away from that
+contract. A developer can switch branches, advance or rewind HEAD, stage
+unrelated files, or touch files that were never part of the reviewed scope.
 
 The resulting problem is not that code generation is inherently unsafe. The
 problem is that an assistant can continue operating under assumptions that are
@@ -30,14 +31,17 @@ stale assumptions may persist until review, CI, or production deployment catches
 the mismatch.
 
 ContextOS addresses this by making execution context explicit and validating it
-at local execution time.
+at local execution time. It does not judge code quality or decide whether an AI
+made good design choices; it checks whether the current Git mutation stays
+inside a declared execution boundary.
 
 ## Observed failure mode
 
-The core observed failure mode is stale execution context:
+The core observed failure mode is Architecture Drift: observed Git changes no
+longer match the approved Intent Contract.
 
 1. A task is reviewed on BranchA.
-2. A context packet is generated for BranchA.
+2. An Intent Contract is generated for BranchA.
 3. AI-assisted work proceeds under BranchA assumptions.
 4. The developer switches locally to BranchB.
 5. The assistant or developer continues applying the original plan.
@@ -55,6 +59,14 @@ mutation:
 The demo shows ContextOS detecting the stale context and blocking the commit
 before any push occurs.
 
+Other Architecture Drift examples include:
+
+- a frontend-only task modifies a database schema
+- a UI copy task modifies authentication logic
+- a styling task touches deployment config
+- an agent changes files outside allowed paths
+- staged protected paths are detected
+
 ## Architectural gap
 
 Common local workflows already have useful tools:
@@ -68,8 +80,8 @@ reviewed execution context that produced it. A branch switch, HEAD change, or
 path-scope violation can occur without a deterministic comparison against the
 original task boundary.
 
-ContextOS fills that gap by introducing explicit local contracts and checking
-them against Git before commit or push.
+ContextOS fills that gap by introducing explicit local Intent Contracts and
+checking them against Git before commit or push.
 
 ## ContextOS design
 
@@ -81,14 +93,16 @@ files.
 - `contextos verify`
   - checks Git state, declared path scope, protected paths, and context
     freshness before allowing work to proceed
+  - reports compliance or Architecture Drift
   - delegates to the deterministic verification implementation in
     `verify_cli.py`
 
 - `contextos ingest <context_packet.yaml>`
-  - reads reviewed context
+  - reads the reviewed Intent Contract
   - validates required packet fields
-  - compares packet repo and branch against local Git state
-  - writes `.contextos/session_context.json`
+  - compares packet repo, branch, and optional expected HEAD against local Git
+    state
+  - writes `.contextos/session_context.json`, `session.json`, and `policy.yaml`
 
 - `contextos verify-freshness`
   - classifies whether an execution plan still matches current repository state
@@ -110,17 +124,17 @@ files.
 
 ### Local files
 
-- `context_packet.yaml`: reviewed task context
+- `context_packet.yaml`: local file representation of the Intent Contract
 - `.contextos/session_context.json`: ingested branch, HEAD hash, timestamp, and
   source metadata
-- `policy.yaml`: allowed paths and protected paths
+- `policy.yaml`: scope and protected-path policy
 - `session.json`: verification-time session configuration
 - `audit.md`: optional markdown verification report
 
 ### Architecture diagram
 
 ```text
-Reviewed task context
+Reviewed Intent Contract
         |
         v
 context_packet.yaml
@@ -147,6 +161,32 @@ context_packet.yaml
 terminal result + optional markdown audit report + pre-commit decision
 ```
 
+## Intent Contract model
+
+An Intent Contract is the reviewed task boundary approved by a human before
+Claude/Cursor performs coding work. It includes:
+
+- task objective
+- expected branch
+- expected HEAD, captured during ingestion as Git provenance
+- allowed paths
+- protected paths
+- success criteria
+- assumptions
+- risks
+- human approval requirement
+
+The concrete MVP formula is:
+
+```text
+Intent Contract + Git Diff + Scope Rules = Architecture Drift Report
+```
+
+`context_packet.yaml` remains the existing local file representation of that
+contract. `.contextos/session_context.json` is the ingested Git/provenance
+snapshot. `policy.yaml` is the scope and protected-path policy used during
+verification.
+
 ## Execution-boundary concept
 
 An execution boundary is the local, deterministic contract that defines where a
@@ -167,13 +207,14 @@ between declared local files and current local Git state.
 ## AI-assisted mutation definition
 
 An AI-assisted mutation is a repository change made by, suggested by, or
-continued from an AI-assisted development session. ContextOS does not attempt to
-infer intent or assess code quality. It evaluates whether the mutation fits the
-declared execution boundary.
+continued from a Claude/Cursor development session. ContextOS does not attempt
+to infer intent, assess code quality, or determine whether the assistant made
+good design choices. It evaluates whether the mutation fits the declared
+execution boundary.
 
 Examples:
 
-- a documentation edit generated from a reviewed context packet
+- a documentation edit generated from a reviewed Intent Contract
 - a code change suggested by an assistant and staged by a developer
 - a deployment configuration change attempted after branch context has changed
 
@@ -238,7 +279,8 @@ and Git commands.
 ### Path-scope enforcement
 
 `allowed_paths` define the paths a task may change. Verification fails when
-changed files fall outside those paths.
+changed files fall outside those paths and reports that the observed change
+exceeds Intent Contract scope.
 
 ### Protected paths
 
@@ -253,6 +295,9 @@ Modes:
 
 - advisory: print warnings without failing verification
 - enforce: fail verification when staged protected paths are touched
+
+Protected-path violations include the guardrail decision that human review is
+required.
 
 ### Pre-commit enforcement
 
@@ -286,13 +331,40 @@ When `--report` is provided, verification writes a markdown audit report with:
 - branch
 - changed files
 - allowed files
+- Intent Contract scope decision
+- Architecture Drift result
 - violations
 - context freshness classification and reasons
 - protected path violations
 - Git status summary
 
 The report is local provenance for a verification event. It records what was
-checked and why verification passed or failed.
+checked, whether the Git mutation stayed inside the Intent Contract, and why
+verification passed or reported Architecture Drift.
+
+## Claude/Cursor workflow
+
+```text
+Human reviews task
+        |
+        v
+Intent Contract is created
+        |
+        v
+Claude/Cursor performs coding work
+        |
+        v
+ContextOS runs verify
+        |
+        v
+ContextOS reports compliance or drift
+        |
+        v
+Human reviews the evidence report before commit/push/merge
+```
+
+ContextOS does not replace Claude, Cursor, Git, tests, pull requests, or human
+review. It provides deterministic execution-boundary assurance.
 
 ## Demo walkthrough
 
@@ -339,7 +411,8 @@ Supporting demo artifacts include:
 - YAML parsing is intentionally minimal and supports the simple packet and
   policy structures used by the tool.
 - Protected-path matching is path based; it does not inspect file contents.
-- ContextOS does not evaluate code correctness, test adequacy, or review quality.
+- ContextOS does not evaluate code correctness, test adequacy, review quality,
+  or design quality.
 - Audit reports are local markdown records, not cryptographic attestations.
 - The tool assumes developers run or install the verification workflow before
   commit or push.
@@ -359,16 +432,22 @@ Supporting demo artifacts include:
 - **AI-assisted mutation:** A repository change made by, suggested by, or
   continued from an AI-assisted development session.
 - **Allowed path:** A file or directory path where task changes are permitted.
+- **Architecture Drift:** A mismatch between observed Git changes and the
+  approved Intent Contract.
 - **Audit report:** A markdown record of verification inputs, results, and
   violations.
 - **Branch/context desynchronization:** A mismatch between current Git state and
   ingested session context.
-- **Context packet:** Reviewed task context stored in `context_packet.yaml`.
+- **Context packet:** Existing local file name for the Intent Contract stored in
+  `context_packet.yaml`.
 - **Declared execution contract:** A local file that defines task boundaries,
   such as `policy.yaml` or `.contextos/session_context.json`.
 - **Execution boundary:** The deterministic local boundary that defines where a
   task may operate.
 - **Git authoritative state:** The local Git state used as verification input.
+- **Intent Contract:** The human-approved task boundary containing objective,
+  expected branch and HEAD, allowed paths, protected paths, success criteria,
+  assumptions, risks, and human approval requirement.
 - **Protected path:** A staged path that warns or blocks when touched.
 - **Session context:** The ingested `.contextos/session_context.json` file.
 - **Stale execution context:** An execution context whose branch or HEAD no
@@ -381,8 +460,9 @@ ContextOS is not:
 - AGI governance
 - autonomous AI safety
 - enterprise orchestration
+- a web platform
 
 ContextOS is:
 
-> A lightweight deterministic execution-boundary layer for AI-assisted
-> development workflows.
+> A local-first deterministic verifier for AI-assisted development scope
+> assurance.
