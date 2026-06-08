@@ -795,5 +795,230 @@ class VerifyFreshnessTests(unittest.TestCase):
             self.assertIn("## Execution should be blocked\nyes", output)
 
 
+class ClassifyChangesTests(unittest.TestCase):
+    def sample_policy(self) -> contextos.NormalizedPolicy:
+        return contextos.NormalizedPolicy(
+            allowed=(contextos.PolicyPathRule("docs"),),
+            review_required=(
+                contextos.PolicyPathRule(
+                    ".contextos/policies",
+                    category="governance_metadata",
+                ),
+            ),
+            blocked=(contextos.PolicyPathRule(".env"),),
+            default_action="review_required",
+        )
+
+    def test_classifies_intent_allowed_path(self) -> None:
+        finding = contextos.classify_changed_path(
+            "README.md",
+            contract=contextos.IntentContract(allowed_paths=("README.md",)),
+            policy=self.sample_policy(),
+        )
+
+        self.assertEqual(finding.classification, "intent_allowed")
+        self.assertEqual(finding.confidence, "high")
+        self.assertEqual(finding.reason, "matched Intent Contract allowed_paths")
+
+    def test_classifies_policy_allowed_path_outside_intent(self) -> None:
+        finding = contextos.classify_changed_path(
+            "docs/example.md",
+            contract=contextos.IntentContract(allowed_paths=("README.md",)),
+            policy=self.sample_policy(),
+        )
+
+        self.assertEqual(finding.classification, "policy_allowed")
+        self.assertEqual(finding.confidence, "reduced")
+        self.assertEqual(
+            finding.reason,
+            "outside intent but allowed by repository policy",
+        )
+
+    def test_classifies_review_required_governance_metadata(self) -> None:
+        finding = contextos.classify_changed_path(
+            ".contextos/policies/example.yaml",
+            contract=contextos.IntentContract(allowed_paths=("README.md",)),
+            policy=self.sample_policy(),
+        )
+
+        self.assertEqual(finding.classification, "review_required")
+        self.assertEqual(finding.confidence, "reduced")
+        self.assertEqual(
+            finding.reason,
+            "outside Intent Contract; matched repository policy review_required governance_metadata",
+        )
+
+    def test_classifies_blocked_path(self) -> None:
+        finding = contextos.classify_changed_path(
+            ".env",
+            contract=contextos.IntentContract(allowed_paths=("README.md",)),
+            policy=self.sample_policy(),
+        )
+
+        self.assertEqual(finding.classification, "blocked")
+        self.assertEqual(finding.confidence, "low")
+        self.assertEqual(finding.reason, "blocked by repository policy")
+
+    def test_classifies_default_review_required_path(self) -> None:
+        finding = contextos.classify_changed_path(
+            "unknown/file.txt",
+            contract=contextos.IntentContract(allowed_paths=("README.md",)),
+            policy=self.sample_policy(),
+        )
+
+        self.assertEqual(finding.classification, "default_review_required")
+        self.assertEqual(finding.confidence, "low")
+        self.assertEqual(
+            finding.reason,
+            "outside intent and no policy rule matched",
+        )
+
+    def test_final_decision_aggregation(self) -> None:
+        intent_allowed = contextos.ChangeClassification(
+            path="README.md",
+            classification="intent_allowed",
+            confidence="high",
+            reason="matched Intent Contract allowed_paths",
+        )
+        policy_allowed = contextos.ChangeClassification(
+            path="docs/example.md",
+            classification="policy_allowed",
+            confidence="reduced",
+            reason="outside intent but allowed by repository policy",
+        )
+        review_required = contextos.ChangeClassification(
+            path=".contextos/policies/example.yaml",
+            classification="review_required",
+            confidence="reduced",
+            reason="outside Intent Contract; matched repository policy review_required governance_metadata",
+        )
+        blocked = contextos.ChangeClassification(
+            path=".env",
+            classification="blocked",
+            confidence="low",
+            reason="blocked by repository policy",
+        )
+
+        self.assertEqual(
+            contextos.final_change_decision((blocked, intent_allowed))[0],
+            "BLOCKED",
+        )
+        self.assertEqual(
+            contextos.final_change_decision((review_required, intent_allowed))[0],
+            "REVIEW_REQUIRED",
+        )
+        self.assertEqual(
+            contextos.final_change_decision((intent_allowed,))[0],
+            "COMPLIANT",
+        )
+        self.assertEqual(
+            contextos.final_change_decision((policy_allowed,))[0],
+            "POLICY_ALLOWED_WITH_REDUCED_CONFIDENCE",
+        )
+
+    def test_help_lists_classify_changes(self) -> None:
+        self.assertIn("classify-changes", contextos.build_parser().format_help())
+
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit) as raised:
+            with contextlib.redirect_stdout(stdout):
+                contextos.main(["classify-changes", "--help"])
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("--contract", stdout.getvalue())
+        self.assertIn("--policy", stdout.getvalue())
+        self.assertIn("--base", stdout.getvalue())
+
+    def test_classify_changes_cli_reports_review_required(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            base_branch = git_current_branch(repo)
+            subprocess.run(
+                ["git", "checkout", "-b", "feature/classifier"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            (repo / "docs").mkdir()
+            (repo / ".contextos" / "contracts").mkdir(parents=True)
+            (repo / ".contextos" / "policies").mkdir(parents=True)
+            contract_path = (
+                repo
+                / ".contextos"
+                / "contracts"
+                / "CTX-0001-contextos-readme-update.yaml"
+            )
+            policy_path = repo / ".contextos" / "policies" / "normalized-policy.example.yaml"
+            contract_path.write_text(
+                "task_id: CTX-0001\n"
+                "allowed_paths:\n"
+                "- README.md\n"
+                "- docs/\n"
+                "intent_to_policy_fallback:\n"
+                "  model: option_a_keep_intent_narrow\n",
+                encoding="utf-8",
+            )
+            policy_path.write_text(
+                "allowed:\n"
+                "  - path: README.md\n"
+                "  - path: docs/\n"
+                "review_required:\n"
+                "  - path: .contextos/contracts/\n"
+                "    category: governance_metadata\n"
+                "  - path: .contextos/policies/\n"
+                "    category: governance_metadata\n"
+                "blocked:\n"
+                "  - path: .env\n"
+                "default_action: review_required\n",
+                encoding="utf-8",
+            )
+            (repo / "README.md").write_text("# Changed\n", encoding="utf-8")
+            (repo / "docs" / "POLICY_CONNECTORS.md").write_text(
+                "# Policy Connectors\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "add", "."],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "classifier fixtures"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "classify-changes",
+                        "--contract",
+                        ".contextos/contracts/CTX-0001-contextos-readme-update.yaml",
+                        "--policy",
+                        ".contextos/policies/normalized-policy.example.yaml",
+                        "--base",
+                        base_branch,
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("ContextOS change classification", output)
+            self.assertIn("classification: intent_allowed", output)
+            self.assertIn("classification: review_required", output)
+            self.assertIn("Final decision:\nREVIEW_REQUIRED", output)
+            self.assertIn("Confidence:\nREDUCED", output)
+
+
 if __name__ == "__main__":
     unittest.main()

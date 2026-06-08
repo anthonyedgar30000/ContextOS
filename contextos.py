@@ -36,6 +36,45 @@ class ContextPacket:
 
 
 @dataclass(frozen=True)
+class IntentContract:
+    allowed_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PolicyPathRule:
+    path: str
+    category: str | None = None
+
+
+@dataclass(frozen=True)
+class NormalizedPolicy:
+    allowed: tuple[PolicyPathRule, ...]
+    review_required: tuple[PolicyPathRule, ...]
+    blocked: tuple[PolicyPathRule, ...]
+    default_action: str = "review_required"
+
+
+@dataclass(frozen=True)
+class ChangeClassification:
+    path: str
+    classification: str
+    confidence: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ChangeClassificationReport:
+    contract_path: Path
+    policy_path: Path
+    base: str
+    changed_files: tuple[str, ...]
+    findings: tuple[ChangeClassification, ...]
+    final_decision: str
+    confidence: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class IssuePacket:
     project: str
     repo: str
@@ -317,6 +356,201 @@ def parse_issue_packet_yaml(text: str) -> dict[str, object]:
     )
 
 
+def parse_intent_contract_yaml(text: str, *, source_name: str) -> IntentContract:
+    allowed_paths: list[str] = []
+    active_allowed_paths = False
+    found_allowed_paths = False
+
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        without_comment = strip_yaml_comment(raw_line).rstrip()
+        if not without_comment.strip():
+            continue
+
+        indent = len(without_comment) - len(without_comment.lstrip(" "))
+        line = without_comment.strip()
+
+        if active_allowed_paths and line.startswith("- "):
+            allowed_paths.append(
+                parse_yaml_scalar(
+                    line[2:],
+                    source=f"{source_name} line {line_number}",
+                )
+            )
+            continue
+
+        if indent == 0:
+            active_allowed_paths = False
+            key, separator, value = line.partition(":")
+            if not separator:
+                raise ContextOSError(
+                    f"{source_name} line {line_number}: expected '<field>:'"
+                )
+            if key.strip() != "allowed_paths":
+                continue
+            found_allowed_paths = True
+            active_allowed_paths = True
+            value = value.strip()
+            if value:
+                allowed_paths.extend(
+                    parse_inline_yaml_list(
+                        value,
+                        source=f"{source_name} line {line_number}",
+                    )
+                )
+            continue
+
+        if active_allowed_paths:
+            if not line.startswith("- "):
+                raise ContextOSError(
+                    f"{source_name} line {line_number}: expected '- <path>'"
+                )
+            allowed_paths.append(
+                parse_yaml_scalar(
+                    line[2:],
+                    source=f"{source_name} line {line_number}",
+                )
+            )
+
+    if not found_allowed_paths or not allowed_paths:
+        raise ContextOSError(
+            f"{source_name} field 'allowed_paths' must be a non-empty list"
+        )
+
+    return IntentContract(
+        allowed_paths=tuple(
+            dict.fromkeys(
+                normalize_repo_path(item, source=f"{source_name} allowed_paths")
+                for item in allowed_paths
+            )
+        )
+    )
+
+
+def parse_policy_rule_scalar(value: str, *, source: str) -> str:
+    try:
+        return parse_yaml_scalar(value, source=source)
+    except ContextOSError as error:
+        raise ContextOSError(f"{source}: invalid policy rule: {error}") from error
+
+
+def parse_normalized_policy_yaml(text: str, *, source_name: str) -> NormalizedPolicy:
+    rule_sections = {"allowed", "review_required", "blocked"}
+    rules: dict[str, list[PolicyPathRule]] = {
+        "allowed": [],
+        "review_required": [],
+        "blocked": [],
+    }
+    default_action = "review_required"
+    active_section: str | None = None
+    current_rule: dict[str, str] | None = None
+
+    def flush_rule() -> None:
+        nonlocal current_rule
+        if active_section is None or current_rule is None:
+            current_rule = None
+            return
+        path = current_rule.get("path")
+        if path is None:
+            raise ContextOSError(
+                f"{source_name}: policy section '{active_section}' contains a rule without path"
+            )
+        rules[active_section].append(
+            PolicyPathRule(
+                path=normalize_repo_path(
+                    path,
+                    source=f"{source_name} {active_section}",
+                ),
+                category=current_rule.get("category"),
+            )
+        )
+        current_rule = None
+
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        without_comment = strip_yaml_comment(raw_line).rstrip()
+        if not without_comment.strip():
+            continue
+
+        indent = len(without_comment) - len(without_comment.lstrip(" "))
+        line = without_comment.strip()
+
+        if indent == 0:
+            flush_rule()
+            active_section = None
+            key, separator, value = line.partition(":")
+            if not separator:
+                raise ContextOSError(
+                    f"{source_name} line {line_number}: expected '<field>:'"
+                )
+            key = key.strip()
+            value = value.strip()
+            if key in rule_sections:
+                if value:
+                    raise ContextOSError(
+                        f"{source_name} line {line_number}: '{key}' must be a block list"
+                    )
+                active_section = key
+                continue
+            if key == "default_action":
+                default_action = parse_policy_rule_scalar(
+                    value,
+                    source=f"{source_name} line {line_number}",
+                )
+            continue
+
+        if active_section is None:
+            continue
+
+        if indent == 2 and line.startswith("- "):
+            flush_rule()
+            key, separator, value = line[2:].partition(":")
+            if not separator or key.strip() != "path":
+                raise ContextOSError(
+                    f"{source_name} line {line_number}: expected '- path: <path>'"
+                )
+            current_rule = {
+                "path": parse_policy_rule_scalar(
+                    value,
+                    source=f"{source_name} line {line_number}",
+                )
+            }
+            continue
+
+        if indent >= 4:
+            if current_rule is None:
+                raise ContextOSError(
+                    f"{source_name} line {line_number}: policy metadata without path"
+                )
+            key, separator, value = line.partition(":")
+            if not separator:
+                raise ContextOSError(
+                    f"{source_name} line {line_number}: expected '<field>: <value>'"
+                )
+            key = key.strip()
+            if key in {"category", "classification"}:
+                current_rule[key] = parse_policy_rule_scalar(
+                    value,
+                    source=f"{source_name} line {line_number}",
+                )
+            continue
+
+        raise ContextOSError(
+            f"{source_name} line {line_number}: unexpected policy indentation"
+        )
+
+    flush_rule()
+    if default_action not in {"review_required", "deny"}:
+        raise ContextOSError(
+            f"{source_name} default_action must be 'review_required' or 'deny'"
+        )
+
+    return NormalizedPolicy(
+        allowed=tuple(dict.fromkeys(rules["allowed"])),
+        review_required=tuple(dict.fromkeys(rules["review_required"])),
+        blocked=tuple(dict.fromkeys(rules["blocked"])),
+        default_action=default_action,
+    )
+
+
 def normalize_repo_path(path: str, *, source: str) -> str:
     raw_path = path.strip().replace("\\", "/")
     if raw_path.startswith("/"):
@@ -392,6 +626,26 @@ def load_context_packet(path: Path) -> ContextPacket:
         task=scalar_fields["task"],
         allowed_paths=normalized_allowed_paths,
     )
+
+
+def load_intent_contract(path: Path) -> IntentContract:
+    try:
+        return parse_intent_contract_yaml(
+            path.read_text(encoding="utf-8"),
+            source_name=str(path),
+        )
+    except FileNotFoundError as error:
+        raise ContextOSError(f"Intent Contract not found: {path}") from error
+
+
+def load_normalized_policy(path: Path) -> NormalizedPolicy:
+    try:
+        return parse_normalized_policy_yaml(
+            path.read_text(encoding="utf-8"),
+            source_name=str(path),
+        )
+    except FileNotFoundError as error:
+        raise ContextOSError(f"normalized policy not found: {path}") from error
 
 
 def require_scalar(packet: dict[str, object], field: str, source_name: str) -> str:
@@ -1184,6 +1438,218 @@ def path_in_scope(path: str, scope: Sequence[str]) -> bool:
     return any(normalized == item or normalized.startswith(f"{item}/") for item in scope)
 
 
+def matching_policy_rule(
+    path: str,
+    rules: Sequence[PolicyPathRule],
+) -> PolicyPathRule | None:
+    normalized = normalize_repo_path(path, source="changed file")
+    for rule in rules:
+        if normalized == rule.path or normalized.startswith(f"{rule.path}/"):
+            return rule
+    return None
+
+
+def classify_changed_path(
+    path: str,
+    *,
+    contract: IntentContract,
+    policy: NormalizedPolicy,
+) -> ChangeClassification:
+    normalized = normalize_repo_path(path, source="changed file")
+    if path_in_scope(normalized, contract.allowed_paths):
+        return ChangeClassification(
+            path=normalized,
+            classification="intent_allowed",
+            confidence="high",
+            reason="matched Intent Contract allowed_paths",
+        )
+
+    allowed_rule = matching_policy_rule(normalized, policy.allowed)
+    if allowed_rule is not None:
+        return ChangeClassification(
+            path=normalized,
+            classification="policy_allowed",
+            confidence="reduced",
+            reason="outside intent but allowed by repository policy",
+        )
+
+    review_rule = matching_policy_rule(normalized, policy.review_required)
+    if review_rule is not None:
+        category = f" {review_rule.category}" if review_rule.category else ""
+        return ChangeClassification(
+            path=normalized,
+            classification="review_required",
+            confidence="reduced",
+            reason=(
+                "outside Intent Contract; matched repository policy "
+                f"review_required{category}"
+            ),
+        )
+
+    blocked_rule = matching_policy_rule(normalized, policy.blocked)
+    if blocked_rule is not None:
+        return ChangeClassification(
+            path=normalized,
+            classification="blocked",
+            confidence="low",
+            reason="blocked by repository policy",
+        )
+
+    default_classification = (
+        "blocked" if policy.default_action == "deny" else "default_review_required"
+    )
+    default_reason = (
+        "outside intent and no policy rule matched"
+        if default_classification == "default_review_required"
+        else "outside intent and default policy action is deny"
+    )
+    return ChangeClassification(
+        path=normalized,
+        classification=default_classification,
+        confidence="low",
+        reason=default_reason,
+    )
+
+
+def final_change_decision(
+    findings: Sequence[ChangeClassification],
+) -> tuple[str, str, str]:
+    classifications = {finding.classification for finding in findings}
+    if "blocked" in classifications:
+        return (
+            "BLOCKED",
+            "LOW",
+            "At least one file was blocked by repository policy.",
+        )
+    if classifications & {"review_required", "default_review_required"}:
+        confidence = (
+            "LOW" if "default_review_required" in classifications else "REDUCED"
+        )
+        return (
+            "REVIEW_REQUIRED",
+            confidence,
+            "Some files were outside the Intent Contract and required policy fallback.",
+        )
+    if "policy_allowed" in classifications:
+        return (
+            "POLICY_ALLOWED_WITH_REDUCED_CONFIDENCE",
+            "REDUCED",
+            "Some files were outside the Intent Contract but allowed by repository policy.",
+        )
+    return (
+        "COMPLIANT",
+        "HIGH",
+        (
+            "No changed files detected."
+            if not findings
+            else "All changed files matched the Intent Contract allowed_paths."
+        ),
+    )
+
+
+def changed_files_from_base(repo: Path, base: str) -> tuple[str, ...]:
+    output = run_git(["diff", "--name-only", f"{base}..HEAD"], repo)
+    return tuple(line for line in output.splitlines() if line.strip())
+
+
+def build_change_classification_report(
+    *,
+    contract_path: Path,
+    policy_path: Path,
+    base: str,
+    changed_files: Sequence[str],
+    contract: IntentContract,
+    policy: NormalizedPolicy,
+) -> ChangeClassificationReport:
+    findings = tuple(
+        classify_changed_path(path, contract=contract, policy=policy)
+        for path in changed_files
+    )
+    final_decision, confidence, reason = final_change_decision(findings)
+    return ChangeClassificationReport(
+        contract_path=contract_path,
+        policy_path=policy_path,
+        base=base,
+        changed_files=tuple(changed_files),
+        findings=findings,
+        final_decision=final_decision,
+        confidence=confidence,
+        reason=reason,
+    )
+
+
+def render_change_classification_report(report: ChangeClassificationReport) -> str:
+    lines = [
+        "ContextOS change classification",
+        "",
+        "Contract:",
+        str(report.contract_path),
+        "",
+        "Policy:",
+        str(report.policy_path),
+        "",
+        "Base:",
+        report.base,
+        "",
+        "Changed files:",
+    ]
+    if report.changed_files:
+        lines.extend(f"- {path}" for path in report.changed_files)
+    else:
+        lines.append("- (none)")
+    lines.extend(["", "Findings:", ""])
+
+    for finding in report.findings:
+        lines.extend(
+            [
+                finding.path,
+                f"  classification: {finding.classification}",
+                f"  confidence: {finding.confidence}",
+                f"  reason: {finding.reason}",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "Final decision:",
+            report.final_decision,
+            "",
+            "Confidence:",
+            report.confidence,
+            "",
+            "Reason:",
+            report.reason,
+        ]
+    )
+    return "\n".join(lines)
+
+
+def classify_changes(
+    *,
+    repo: Path,
+    contract_path: Path,
+    policy_path: Path,
+    base: str,
+) -> int:
+    root = repo_root(repo)
+    resolved_contract_path = contract_path if contract_path.is_absolute() else root / contract_path
+    resolved_policy_path = policy_path if policy_path.is_absolute() else root / policy_path
+    contract = load_intent_contract(resolved_contract_path)
+    policy = load_normalized_policy(resolved_policy_path)
+    changed_files = changed_files_from_base(root, base)
+    report = build_change_classification_report(
+        contract_path=contract_path,
+        policy_path=policy_path,
+        base=base,
+        changed_files=changed_files,
+        contract=contract,
+        policy=policy,
+    )
+    print(render_change_classification_report(report))
+    return 0
+
+
 def changed_paths_for_state(state: RepoState) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -1738,6 +2204,27 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="path for generated issue markdown (default: .contextos/audit/generated_issue.md)",
     )
+    classify_parser = subparsers.add_parser(
+        "classify-changes",
+        help="classify changed files using Intent-to-Policy fallback",
+    )
+    classify_parser.add_argument(
+        "--contract",
+        required=True,
+        type=Path,
+        help="path to active Intent Contract YAML",
+    )
+    classify_parser.add_argument(
+        "--policy",
+        required=True,
+        type=Path,
+        help="path to normalized ContextOS policy YAML",
+    )
+    classify_parser.add_argument(
+        "--base",
+        default="origin/main",
+        help="base ref for git diff comparison (default: origin/main)",
+    )
     subparsers.add_parser(
         "export-last-plan",
         help="export the latest local Cursor execution result for ChatGPT review",
@@ -1797,6 +2284,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return explain_git(args.git_command, args.format)
         if args.command == "create-issue":
             return create_issue(args.packet, args.repo, args.output)
+        if args.command == "classify-changes":
+            return classify_changes(
+                repo=args.repo,
+                contract_path=args.contract,
+                policy_path=args.policy,
+                base=args.base,
+            )
         if args.command == "export-last-plan":
             return export_last_plan(args.repo)
         if args.command == "request-switch":
