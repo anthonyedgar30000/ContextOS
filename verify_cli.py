@@ -667,12 +667,16 @@ def verify(
             "protected mode must be either 'advisory' or 'enforce'"
         )
 
+    actual_repo_root = repo_root(repo)
+    if not session_path.is_absolute():
+        session_path = actual_repo_root / session_path
+    if not policy_path.is_absolute():
+        policy_path = actual_repo_root / policy_path
+    if report_path is not None and not report_path.is_absolute():
+        report_path = actual_repo_root / report_path
     session = load_session(session_path)
     policy = load_policy(policy_path)
 
-    actual_repo_root = repo_root(repo)
-    if report_path is not None and not report_path.is_absolute():
-        report_path = actual_repo_root / report_path
     actual_branch = current_branch(actual_repo_root)
     if session_context_path is None:
         session_context_path = actual_repo_root / ".contextos" / "session_context.json"
