@@ -378,6 +378,9 @@ def parse_intent_contract_yaml(text: str, *, source_name: str) -> IntentContract
             )
             continue
 
+        if not active_allowed_paths and line.startswith("- "):
+            continue
+
         if indent == 0:
             active_allowed_paths = False
             key, separator, value = line.partition(":")

@@ -957,6 +957,8 @@ class ClassifyChangesTests(unittest.TestCase):
                 "allowed_paths:\n"
                 "- README.md\n"
                 "- docs/\n"
+                "protected_paths:\n"
+                "- contextos.py\n"
                 "intent_to_policy_fallback:\n"
                 "  model: option_a_keep_intent_narrow\n",
                 encoding="utf-8",
