@@ -40,6 +40,91 @@ Assurance Decision
 The ordering emphasizes the same invariant from either direction: standing
 policy and task intent both constrain the observed repository state.
 
+## Intent-to-Policy Fallback
+
+ContextOS first evaluates changed paths against the active Intent Contract. The
+Intent Contract is task-specific authorization. If a changed path is not covered
+by the Intent Contract, ContextOS falls back to repository policy.
+
+Repository policy is standing governance, not task-specific approval. Policy
+fallback does not automatically approve the change. It creates a lower-confidence
+classification that determines the next step. ContextOS must never fail open: if
+neither intent nor policy covers a path, the result must be default human review
+or default deny.
+
+The fallback hierarchy is:
+
+1. Intent Contract
+2. Repository Policy
+3. Default Human Review / Default Deny
+
+Decision table:
+
+| Condition | Result |
+| --- | --- |
+| Intent match | Compliant |
+| Intent miss + policy allow | Policy-allowed, confidence reduced |
+| Intent miss + policy review_required | Human review required |
+| Intent miss + policy block | Blocked |
+| Intent miss + no policy | Default review required / deny |
+
+Path-level classifications include:
+
+- `intent_allowed`: the path is covered by the active Intent Contract.
+- `policy_allowed`: the path missed intent but is allowed by repository policy,
+  with `confidence_reduced`.
+- `review_required`: the path missed intent and requires human review under
+  repository policy.
+- `blocked`: the path is blocked by repository policy.
+- `default_review_required`: no policy rule matched and the default action is
+  human review.
+- `confidence_reduced`: policy fallback was used instead of task-specific
+  authorization.
+- `governance_metadata`: ContextOS policy or Intent Contract metadata that can
+  affect task or repository authority.
+
+Governance metadata paths such as `.contextos/contracts/` and
+`.contextos/policies/` should normally require human review unless the active
+Intent Contract explicitly allows governance metadata changes.
+
+### Current branch fallback example
+
+Intent Contract allowed paths:
+
+- `README.md`
+- `docs/`
+
+Observed changed files:
+
+- `README.md`
+- `docs/CAPSTONE.md`
+- `docs/POLICY_CONNECTORS.md`
+- `.contextos/contracts/CTX-0001-contextos-readme-update.yaml`
+- `.contextos/policies/normalized-policy.example.yaml`
+
+Assessment:
+
+- `README.md`: allowed by Intent Contract (`intent_allowed`)
+- `docs/CAPSTONE.md`: allowed by Intent Contract (`intent_allowed`)
+- `docs/POLICY_CONNECTORS.md`: allowed by Intent Contract (`intent_allowed`)
+- `.contextos/contracts/CTX-0001-contextos-readme-update.yaml`: not covered by
+  Intent Contract; policy fallback required (`review_required`,
+  `governance_metadata`)
+- `.contextos/policies/normalized-policy.example.yaml`: not covered by Intent
+  Contract; policy fallback required (`review_required`,
+  `governance_metadata`)
+
+Expected final decision:
+
+```text
+REVIEW REQUIRED
+```
+
+Reason: the documentation changes are mostly inside the task-specific Intent
+Contract, but governance metadata changed outside the explicit Intent Contract.
+Those files are policy-classified as governance metadata and require human
+review.
+
 ## Intent Contracts
 
 An Intent Contract records the approved boundary for a specific task. It can
@@ -85,15 +170,19 @@ deterministic assurance engine.
 The normalized policy model is the local representation produced by Policy
 Connectors. It should support concepts such as:
 
-- low risk paths
+- allowed paths
 - review required paths
+- blocked paths
 - protected paths
 - ownership
 - approval requirements
 - freshness requirements
+- default action
 
 Example normalized policy files can live under `.contextos/policies/`. These
 files are documentation and structure until runtime support is explicitly added.
+A normalized policy can include `allowed`, `review_required`, `blocked`, and
+`default_action` sections so fallback classification is explicit.
 
 ## Assurance Decision Flow
 

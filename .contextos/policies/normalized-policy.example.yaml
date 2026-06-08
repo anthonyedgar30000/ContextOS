@@ -7,25 +7,57 @@ sources:
     name: docs/POLICY_CONNECTORS.md
     connector: example-policy-connector
 
-low_risk_paths:
+allowed:
   - path: README.md
-    rationale: Documentation-only changes are low risk when no executable files change.
+    classification: policy_allowed
+    rationale: Documentation-only changes are normally allowed by repository policy.
   - path: docs/
+    classification: policy_allowed
     rationale: Architecture and usage documentation.
 
-review_required_paths:
+review_required:
+  - path: .contextos/contracts/
+    classification: review_required
+    category: governance_metadata
+    rationale: Intent Contracts define task authority and require human review unless explicitly allowed by active intent.
+  - path: .contextos/policies/
+    classification: review_required
+    category: governance_metadata
+    rationale: Repository policy metadata changes require human review unless explicitly allowed by active intent.
   - path: .github/
+    classification: review_required
     required_review: repository_maintainer
   - path: install_hooks.py
+    classification: review_required
     required_review: tooling_owner
-
-protected_paths:
   - path: contextos.py
+    classification: review_required
     reason: CLI command surface.
   - path: verify_cli.py
+    classification: review_required
     reason: Deterministic verification engine.
   - path: tests/
+    classification: review_required
     reason: Verification coverage and expected behavior.
+
+blocked:
+  - path: .env
+    classification: blocked
+    reason: Local secrets and environment configuration must not be committed.
+  - path: secrets/
+    classification: blocked
+    reason: Secret material is outside allowed repository mutation scope.
+  - path: deployment/
+    classification: blocked
+    reason: Deployment changes require separate explicit authorization.
+  - path: credentials/
+    classification: blocked
+    reason: Credential material is outside allowed repository mutation scope.
+  - path: private_keys/
+    classification: blocked
+    reason: Private key material must not be committed.
+
+default_action: review_required
 
 ownership:
   - path: docs/
@@ -39,6 +71,9 @@ ownership:
       - contextos_maintainers
 
 approval_requirements:
+  - scope: governance_metadata
+    required_approvals:
+      - human_reviewer
   - scope: architecture_change
     required_approvals:
       - architecture_owner
@@ -52,7 +87,10 @@ freshness_requirements:
   remote_tracking_ref_should_be_current: true
 
 assurance_findings:
-  compliant: Observed state satisfies known policy and known task intent.
-  reduced_assurance: Policy or intent context is incomplete.
-  architecture_drift: Observed state no longer matches the approved Intent Contract.
-  policy_violation: Observed state conflicts with standing policy.
+  intent_allowed: Changed path is covered by the active Intent Contract.
+  policy_allowed: Changed path missed intent but is allowed by repository policy.
+  review_required: Changed path missed intent and requires human review under policy.
+  blocked: Changed path is blocked by policy.
+  default_review_required: No policy rule matched and default_action requires review.
+  confidence_reduced: Policy fallback was used because task-specific intent did not cover the path.
+  governance_metadata: ContextOS policy or Intent Contract metadata that changes task or repository authority.

@@ -199,6 +199,52 @@ Observed Git State
 Assurance Decision
 ```
 
+### Intent-to-Policy fallback
+
+ContextOS evaluates changed paths against the active Intent Contract first. The
+Intent Contract is task-specific authorization. If a changed path is not covered
+by the Intent Contract, ContextOS falls back to repository policy.
+
+Repository policy is standing governance, not task-specific approval. Policy
+fallback does not automatically approve a change. It creates a lower-confidence
+classification that determines the next step. ContextOS must never fail open:
+the final fallback is default human review or default deny.
+
+The fallback hierarchy is:
+
+1. Intent Contract
+2. Repository Policy
+3. Default Human Review / Default Deny
+
+| Condition | Result |
+| --- | --- |
+| Intent match | Compliant |
+| Intent miss + policy allow | Policy-allowed, confidence reduced |
+| Intent miss + policy review_required | Human review required |
+| Intent miss + policy block | Blocked |
+| Intent miss + no policy | Default review required / deny |
+
+Path-level classifications include `intent_allowed`, `policy_allowed`,
+`review_required`, `blocked`, `default_review_required`,
+`confidence_reduced`, and `governance_metadata`.
+
+Governance metadata paths such as `.contextos/contracts/` and
+`.contextos/policies/` should normally require human review unless the active
+Intent Contract explicitly allows governance metadata changes.
+
+Example assessment for this branch:
+
+| Changed file | Assessment |
+| --- | --- |
+| `README.md` | allowed by Intent Contract (`intent_allowed`) |
+| `docs/CAPSTONE.md` | allowed by Intent Contract (`intent_allowed`) |
+| `docs/POLICY_CONNECTORS.md` | allowed by Intent Contract (`intent_allowed`) |
+| `.contextos/contracts/CTX-0001-contextos-readme-update.yaml` | not covered by Intent Contract; policy fallback required (`review_required`, `governance_metadata`) |
+| `.contextos/policies/normalized-policy.example.yaml` | not covered by Intent Contract; policy fallback required (`review_required`, `governance_metadata`) |
+
+The expected final decision is `REVIEW REQUIRED` because governance metadata
+changed outside the explicit Intent Contract.
+
 ### Intent Contracts
 
 Intent Contracts record approved task boundaries under `.contextos/contracts/`.
@@ -222,15 +268,19 @@ workflow automation from ContextOS core.
 The normalized policy model is a local representation of standing policy. It
 should support concepts such as:
 
-- low risk paths
+- allowed paths
 - review required paths
+- blocked paths
 - protected paths
 - ownership
 - approval requirements
 - freshness requirements
+- default action
 
 Example normalized policy files can live under `.contextos/policies/` as
-documentation and structure until runtime support is explicitly added.
+documentation and structure until runtime support is explicitly added. A
+normalized policy can include `allowed`, `review_required`, `blocked`, and
+`default_action` sections so fallback classification is explicit.
 
 ### Assurance Decision Flow
 
@@ -468,11 +518,18 @@ Supporting demo artifacts include:
 - **Context packet:** Reviewed task context stored in `context_packet.yaml`.
 - **Declared execution contract:** A local file that defines task boundaries,
   such as `policy.yaml` or `.contextos/session_context.json`.
+- **Default review required:** The fail-safe result when no Intent Contract or
+  repository policy rule covers a changed path.
 - **Execution boundary:** The deterministic local boundary that defines where a
   task may operate.
 - **Git authoritative state:** The local Git state used as verification input.
+- **Governance metadata:** ContextOS policy or Intent Contract metadata that can
+  affect task or repository authority.
 - **Intent Contract:** A task-specific approved boundary stored under
   `.contextos/contracts/`.
+- **Intent-to-Policy fallback:** The hierarchy that checks task-specific intent
+  first, repository policy second, and default human review or deny when neither
+  applies.
 - **Normalized Policy Model:** The local ContextOS representation of standing
   policy produced by Policy Connectors.
 - **Policy:** Standing organizational guidance that remains active for every

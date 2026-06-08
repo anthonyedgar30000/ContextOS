@@ -3,7 +3,7 @@ project: ContextOS
 repo: ContextOS
 branch: main
 
-objective: Update ContextOS documentation and terminology to introduce Intent Contracts and Architecture Drift language without changing executable behavior.
+objective: Update ContextOS documentation and terminology to introduce Intent Contracts, Policy Connectors, Architecture Drift, and Intent-to-Policy fallback language without changing executable behavior.
 
 allowed_paths:
 
@@ -25,6 +25,8 @@ success_criteria:
 
 - Intent Contract terminology documented
 - Architecture Drift terminology documented
+- Policy Connector terminology documented
+- Intent-to-Policy fallback documented
 - Existing CLI behavior preserved
 - Existing tests continue to pass
 
@@ -32,10 +34,23 @@ assumptions:
 
 - This is a documentation-only update
 - No verification logic changes are required
+- Governance metadata changes are outside this Intent Contract unless separately approved
 
 risks:
 
 - Terminology changes could diverge from actual implementation
 - Product language must remain technically accurate
+- Governance metadata changes may alter task or repository authority and require human review
+
+intent_to_policy_fallback:
+  model: option_a_keep_intent_narrow
+  intent_scope:
+  - README.md
+  - docs/
+  outside_intent_requires_policy_fallback:
+  - .contextos/contracts/
+  - .contextos/policies/
+  expected_classification: review_required
+  reason: Governance metadata is not covered by this narrow Intent Contract and should require human review under repository policy.
 
 human_approval_required: true

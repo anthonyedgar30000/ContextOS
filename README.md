@@ -157,13 +157,49 @@ Observed State
 Assurance Decision
 ```
 
+ContextOS also uses an Intent-to-Policy fallback model. It first evaluates
+changes against the active Intent Contract because the contract is task-specific
+authorization. If a changed path is not covered by the Intent Contract, ContextOS
+falls back to repository policy. Repository policy is standing governance, not
+task-specific approval, so fallback does not automatically approve the change.
+It creates a lower-confidence classification that determines the next step.
+
+ContextOS must never fail open:
+
+1. Intent Contract
+2. Repository Policy
+3. Default Human Review / Default Deny
+
+| Condition | Result |
+| --- | --- |
+| Intent match | Compliant |
+| Intent miss + policy allow | Policy-allowed, confidence reduced |
+| Intent miss + policy review_required | Human review required |
+| Intent miss + policy block | Blocked |
+| Intent miss + no policy | Default review required / deny |
+
+Path-level classification terms are `intent_allowed`, `policy_allowed`,
+`review_required`, `blocked`, `default_review_required`,
+`confidence_reduced`, and `governance_metadata`.
+
+For example, this branch's active Intent Contract allows `README.md` and
+`docs/`. Changes to `README.md`, `docs/CAPSTONE.md`, and
+`docs/POLICY_CONNECTORS.md` are `intent_allowed`. Changes to
+`.contextos/contracts/CTX-0001-contextos-readme-update.yaml` and
+`.contextos/policies/normalized-policy.example.yaml` are not covered by the
+Intent Contract. They require policy fallback and are classified as
+`review_required` governance metadata. The expected final decision is
+`REVIEW REQUIRED`.
+
 Policy Connectors are future extension points that translate external policy
 sources into a normalized ContextOS policy model. Example sources include
 GitHub `CODEOWNERS`, branch protection settings, repository policy files,
 security policy repositories, change management systems, and team ownership
 definitions. The normalized model should support low risk paths, review required
-paths, protected paths, ownership, approval requirements, and freshness
-requirements.
+paths, protected paths, blocked paths, ownership, approval requirements,
+freshness requirements, and a default action. Example normalized policies can
+make fallback explicit with `allowed`, `review_required`, `blocked`, and
+`default_action` sections.
 
 ContextOS does not decide organizational actions. It produces findings such as
 `COMPLIANT`, `REDUCED_ASSURANCE`, `ARCHITECTURE_DRIFT`, and
@@ -249,8 +285,13 @@ passed or failed.
 - **Freshness:** Whether current Git state still matches ingested context.
 - **Git authoritative state:** The local Git branch, HEAD, status, and diffs used
   as verification inputs.
+- **Governance metadata:** ContextOS policy or Intent Contract metadata that can
+  affect task or repository authority.
 - **Intent Contract:** An approved task boundary stored under
   `.contextos/contracts/`.
+- **Intent-to-Policy fallback:** The hierarchy that checks task-specific intent
+  first, repository policy second, and default human review or deny when neither
+  applies.
 - **Normalized Policy Model:** The local ContextOS representation of standing
   policy produced by Policy Connectors.
 - **Policy:** Standing organizational guidance that remains active for every
