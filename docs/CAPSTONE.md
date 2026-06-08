@@ -113,6 +113,9 @@ files.
 - `context_packet.yaml`: reviewed task context
 - `.contextos/session_context.json`: ingested branch, HEAD hash, timestamp, and
   source metadata
+- `.contextos/contracts/`: task-specific Intent Contracts
+- `.contextos/policies/`: normalized policy examples and future local policy
+  inputs
 - `policy.yaml`: allowed paths and protected paths
 - `session.json`: verification-time session configuration
 - `audit.md`: optional markdown verification report
@@ -163,6 +166,97 @@ task may operate. It combines:
 
 The boundary is not an abstract policy layer. It is a concrete comparison
 between declared local files and current local Git state.
+
+## Policy-aware assurance model
+
+ContextOS can ingest standing organizational policy while remaining a
+deterministic local assurance engine. Policy is always active. Intent Contracts
+are task-specific constraints layered on top of standing policy, and they do not
+replace policy.
+
+The assurance hierarchy is:
+
+```text
+Policy
++
+Intent Contract
++
+Observed State
+
+Assurance Decision
+```
+
+Equivalently, ContextOS evaluates the task-specific Intent Contract, standing
+policy, and observed Git state to produce a deterministic assurance decision:
+
+```text
+Intent Contract
++
+Policy
++
+Observed Git State
+
+Assurance Decision
+```
+
+### Intent Contracts
+
+Intent Contracts record approved task boundaries under `.contextos/contracts/`.
+They describe the objective, branch, allowed paths, protected paths, success
+criteria, assumptions, risks, architecture-change allowance, and human approval
+requirements for one unit of work.
+
+### Policy Connectors
+
+A Policy Connector translates an external policy source into a normalized
+ContextOS policy model. Future sources may include GitHub `CODEOWNERS`, GitHub
+branch protection settings, repository policy files, security policy
+repositories, change management systems, and team ownership definitions.
+
+Policy Connectors are translation boundaries only. They should not post
+comments, create tickets, send notifications, approve changes, or trigger
+workflow automation from ContextOS core.
+
+### Normalized Policy Model
+
+The normalized policy model is a local representation of standing policy. It
+should support concepts such as:
+
+- low risk paths
+- review required paths
+- protected paths
+- ownership
+- approval requirements
+- freshness requirements
+
+Example normalized policy files can live under `.contextos/policies/` as
+documentation and structure until runtime support is explicitly added.
+
+### Assurance Decision Flow
+
+ContextOS compares policy, intent, and observed Git state to produce findings:
+
+- `COMPLIANT`
+- `REDUCED_ASSURANCE`
+- `ARCHITECTURE_DRIFT`
+- `POLICY_VIOLATION`
+
+ContextOS does not decide organizational actions. One organization may post a
+GitHub comment, another may create a Jira ticket, and another may require Change
+Advisory Board review. Those actions are outside ContextOS core.
+
+### Fail safe assurance model
+
+| Intent state | Policy state | Assurance result |
+| --- | --- | --- |
+| Intent Known | Policy Known | Normal Assurance |
+| Intent Missing | Policy Known | Reduced Assurance |
+| Intent Known | Policy Missing | Reduced Assurance |
+| Intent Missing | Policy Missing | Human Review Required |
+| Policy violations | Policy Known | Escalation |
+
+Policy violations produce escalation findings for organizations to handle
+outside ContextOS core.
 
 ## AI-assisted mutation definition
 
@@ -340,6 +434,8 @@ Supporting demo artifacts include:
   policy structures used by the tool.
 - Protected-path matching is path based; it does not inspect file contents.
 - ContextOS does not evaluate code correctness, test adequacy, or review quality.
+- ContextOS does not decide organizational actions such as posting comments,
+  creating tickets, sending notifications, or triggering workflow automation.
 - Audit reports are local markdown records, not cryptographic attestations.
 - The tool assumes developers run or install the verification workflow before
   commit or push.
@@ -349,6 +445,8 @@ Supporting demo artifacts include:
 - share parsing utilities between `contextos.py` and `verify_cli.py`
 - add machine-readable verification output
 - add richer policy composition for branch-specific protected paths
+- add Policy Connectors that translate external policy sources into normalized
+  local policy data
 - add optional audit report hashing
 - add CI examples while preserving local-first usage
 - expand deterministic Git command explanation coverage
@@ -359,6 +457,10 @@ Supporting demo artifacts include:
 - **AI-assisted mutation:** A repository change made by, suggested by, or
   continued from an AI-assisted development session.
 - **Allowed path:** A file or directory path where task changes are permitted.
+- **Architecture Drift:** A mismatch between proposed or local changes and the
+  approved Intent Contract or documented execution boundary.
+- **Assurance Decision:** A deterministic finding produced from policy, intent,
+  and observed local Git state.
 - **Audit report:** A markdown record of verification inputs, results, and
   violations.
 - **Branch/context desynchronization:** A mismatch between current Git state and
@@ -369,7 +471,17 @@ Supporting demo artifacts include:
 - **Execution boundary:** The deterministic local boundary that defines where a
   task may operate.
 - **Git authoritative state:** The local Git state used as verification input.
+- **Intent Contract:** A task-specific approved boundary stored under
+  `.contextos/contracts/`.
+- **Normalized Policy Model:** The local ContextOS representation of standing
+  policy produced by Policy Connectors.
+- **Policy:** Standing organizational guidance that remains active for every
+  task.
+- **Policy Connector:** A translation boundary that converts external policy
+  sources into normalized local ContextOS policy data.
 - **Protected path:** A staged path that warns or blocks when touched.
+- **Reduced Assurance:** A finding used when policy or intent context is missing
+  or incomplete.
 - **Session context:** The ingested `.contextos/session_context.json` file.
 - **Stale execution context:** An execution context whose branch or HEAD no
   longer matches local Git state.

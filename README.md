@@ -135,7 +135,7 @@ allowed to do. ContextOS currently uses:
 - `policy.yaml` for allowed and protected paths
 - `session.json` for verification-time branch expectations
 
-### Intent Contracts and Architecture Drift
+### Intent Contracts, policy, and assurance decisions
 
 Intent Contracts represent approved task boundaries. They record the objective,
 branch, allowed paths, protected paths, success criteria, assumptions, and risks
@@ -143,10 +143,41 @@ that define what an AI-assisted mutation is permitted to change. ContextOS store
 Intent Contracts under `.contextos/contracts/` so task boundaries can be reviewed
 as local documentation before any executable behavior changes.
 
+Policy is standing organizational guidance and is always active. Intent
+Contracts are task-specific constraints layered on top of standing policy; they
+do not replace policy. The assurance hierarchy is:
+
+```text
+Policy
++
+Intent Contract
++
+Observed State
+
+Assurance Decision
+```
+
+Policy Connectors are future extension points that translate external policy
+sources into a normalized ContextOS policy model. Example sources include
+GitHub `CODEOWNERS`, branch protection settings, repository policy files,
+security policy repositories, change management systems, and team ownership
+definitions. The normalized model should support low risk paths, review required
+paths, protected paths, ownership, approval requirements, and freshness
+requirements.
+
+ContextOS does not decide organizational actions. It produces findings such as
+`COMPLIANT`, `REDUCED_ASSURANCE`, `ARCHITECTURE_DRIFT`, and
+`POLICY_VIOLATION`. Organizations decide what to do with those findings, such as
+posting a GitHub comment, creating a Jira ticket, or requiring Change Advisory
+Board review. Those actions are outside the ContextOS core.
+
 Architecture Drift is the condition where a proposed or local change no longer
 matches the approved Intent Contract or the documented execution boundary.
 ContextOS uses this language to describe scope, branch, or path mismatches
 without expanding verification beyond deterministic local files and Git state.
+
+See `docs/POLICY_CONNECTORS.md` for the Policy Connector architecture,
+normalized policy model, assurance decision flow, and fail safe assurance model.
 
 ### Path-scope enforcement
 
@@ -193,6 +224,8 @@ passed or failed.
 - **Local-first:** no external APIs or services are required.
 - **Git-centered:** the current branch, HEAD, working tree, and staged diff are
   the authoritative execution state.
+- **Policy-aware:** standing policy remains active while task-specific Intent
+  Contracts add narrower execution constraints.
 - **Small contracts:** context and policy are stored in simple JSON/YAML files.
 - **Fail clearly:** mismatches should produce direct terminal output with
   concrete remediation.
@@ -206,6 +239,8 @@ passed or failed.
 - **Allowed path:** A file or directory pattern where task changes are permitted.
 - **Architecture Drift:** A mismatch between proposed or local changes and the
   approved Intent Contract or documented execution boundary.
+- **Assurance Decision:** A deterministic finding produced from policy, intent,
+  and observed local Git state.
 - **Audit report:** A markdown file containing verification inputs, results, and
   violations.
 - **Context packet:** Reviewed task context provided as `context_packet.yaml`.
@@ -216,7 +251,15 @@ passed or failed.
   as verification inputs.
 - **Intent Contract:** An approved task boundary stored under
   `.contextos/contracts/`.
+- **Normalized Policy Model:** The local ContextOS representation of standing
+  policy produced by Policy Connectors.
+- **Policy:** Standing organizational guidance that remains active for every
+  task.
+- **Policy Connector:** A translation boundary that converts external policy
+  sources into normalized local ContextOS policy data.
 - **Protected path:** A staged file path that should warn or block when touched.
+- **Reduced Assurance:** A finding used when policy or intent context is missing
+  or incomplete.
 - **Session context:** The ingested `.contextos/session_context.json` file.
 - **Stale execution context:** A session context that no longer matches local Git
   state.
@@ -254,6 +297,8 @@ passed or failed.
 - `docs/CAPSTONE.md` provides the final capstone-oriented architecture write-up,
   including the abstract, problem statement, design model, deterministic
   enforcement model, demo walkthrough, limitations, future work, and glossary.
+- `docs/POLICY_CONNECTORS.md` describes Policy Connectors, the normalized policy
+  model, assurance decision flow, and fail safe assurance model.
 
 ## GitHub Issue bridge workflow
 

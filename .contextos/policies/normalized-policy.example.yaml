@@ -1,0 +1,58 @@
+policy_id: example-normalized-policy
+version: 1
+description: Example normalized ContextOS policy model for documentation only.
+
+sources:
+  - type: repository_policy_file
+    name: docs/POLICY_CONNECTORS.md
+    connector: example-policy-connector
+
+low_risk_paths:
+  - path: README.md
+    rationale: Documentation-only changes are low risk when no executable files change.
+  - path: docs/
+    rationale: Architecture and usage documentation.
+
+review_required_paths:
+  - path: .github/
+    required_review: repository_maintainer
+  - path: install_hooks.py
+    required_review: tooling_owner
+
+protected_paths:
+  - path: contextos.py
+    reason: CLI command surface.
+  - path: verify_cli.py
+    reason: Deterministic verification engine.
+  - path: tests/
+    reason: Verification coverage and expected behavior.
+
+ownership:
+  - path: docs/
+    owners:
+      - documentation_owners
+  - path: contextos.py
+    owners:
+      - contextos_maintainers
+  - path: verify_cli.py
+    owners:
+      - contextos_maintainers
+
+approval_requirements:
+  - scope: architecture_change
+    required_approvals:
+      - architecture_owner
+  - scope: protected_path_change
+    required_approvals:
+      - code_owner
+
+freshness_requirements:
+  branch_must_match_intent_contract: true
+  head_must_match_ingested_context: true
+  remote_tracking_ref_should_be_current: true
+
+assurance_findings:
+  compliant: Observed state satisfies known policy and known task intent.
+  reduced_assurance: Policy or intent context is incomplete.
+  architecture_drift: Observed state no longer matches the approved Intent Contract.
+  policy_violation: Observed state conflicts with standing policy.
