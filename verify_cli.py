@@ -409,7 +409,11 @@ def is_allowed(path: str, allowed_paths: Sequence[str]) -> bool:
 
 
 def matches_protected_pattern(path: str, pattern: str) -> bool:
-    return fnmatch.fnmatchcase(path, pattern)
+    return (
+        path == pattern
+        or path.startswith(f"{pattern}/")
+        or fnmatch.fnmatchcase(path, pattern)
+    )
 
 
 def protected_path_violations(
@@ -470,6 +474,19 @@ def branch_mismatch_reason(
 
 def unauthorized_file_reason(path: str) -> str:
     return f"unauthorized file: {path} (not under allowed_paths)"
+
+
+def print_architecture_drift_notice(
+    *,
+    include_scope_message: bool = False,
+    include_guardrail_message: bool = False,
+) -> None:
+    print()
+    print("ARCHITECTURE DRIFT DETECTED")
+    if include_scope_message:
+        print("Observed change exceeds Intent Contract scope.")
+    if include_guardrail_message:
+        print("Guardrail decision: Human review required.")
 
 
 def context_freshness(
@@ -561,6 +578,7 @@ def render_audit_report(
     status_summary: Sequence[str],
     stale_reasons: Sequence[str] = (),
     protected_violations: Sequence[str] = (),
+    architecture_drift_detected: bool = False,
 ) -> str:
     return "\n".join(
         [
@@ -570,6 +588,13 @@ def render_audit_report(
             f"- Repo: {repo}",
             f"- Branch: {actual_branch}",
             f"- Expected Branch: {expected_branch or '(not specified)'}",
+            "",
+            "## Intent Contract Scope Decision",
+            (
+                "ARCHITECTURE DRIFT DETECTED"
+                if architecture_drift_detected
+                else "Within Intent Contract scope"
+            ),
             "",
             "## Changed Files",
             markdown_list(changed_paths),
@@ -605,6 +630,7 @@ def write_audit_report(
     status_summary: Sequence[str],
     stale_reasons: Sequence[str] = (),
     protected_violations: Sequence[str] = (),
+    architecture_drift_detected: bool = False,
 ) -> None:
     report = render_audit_report(
         timestamp=utc_timestamp(),
@@ -617,6 +643,7 @@ def write_audit_report(
         status_summary=status_summary,
         stale_reasons=stale_reasons,
         protected_violations=protected_violations,
+        architecture_drift_detected=architecture_drift_detected,
     )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -644,6 +671,8 @@ def verify(
     policy = load_policy(policy_path)
 
     actual_repo_root = repo_root(repo)
+    if report_path is not None and not report_path.is_absolute():
+        report_path = actual_repo_root / report_path
     actual_branch = current_branch(actual_repo_root)
     if session_context_path is None:
         session_context_path = actual_repo_root / ".contextos" / "session_context.json"
@@ -692,6 +721,11 @@ def verify(
     protected_block_reasons = (
         rendered_protected_violations if protected_mode == "enforce" else []
     )
+    architecture_drift_detected = (
+        freshness.classification != "FRESH"
+        or bool(mismatch_reasons)
+        or bool(protected_block_reasons)
+    )
 
     print(f"session: {session_path}")
     print(f"policy: {policy_path}")
@@ -727,6 +761,7 @@ def verify(
             print(f"protected paths: {colorize('WARNING', RED)}")
         print(f"protected mode: {protected_mode}")
         print_section("protected path violations:", rendered_protected_violations)
+        print("Guardrail decision: Human review required.")
     else:
         print()
         print(f"protected paths: {colorize('PASSED', GREEN)}")
@@ -749,22 +784,27 @@ def verify(
             status_summary=status_summary,
             stale_reasons=freshness_details,
             protected_violations=rendered_protected_violations,
+            architecture_drift_detected=architecture_drift_detected,
         )
         print(f"audit report: {report_path}")
 
     print_context_freshness(freshness)
     if freshness.classification != "FRESH":
+        print_architecture_drift_notice(include_guardrail_message=True)
         return 1
 
     if mismatch_reasons:
-        print()
+        print_architecture_drift_notice(
+            include_scope_message=True,
+            include_guardrail_message=True,
+        )
         print_section("mismatch reasons:", mismatch_reasons)
         print_section("unauthorized files:", disallowed_paths)
         print(f"verification: {colorize('FAILED', RED)}")
         return 1
 
     if protected_block_reasons:
-        print()
+        print_architecture_drift_notice(include_guardrail_message=True)
         print_section("mismatch reasons:", protected_block_reasons)
         print(f"verification: {colorize('FAILED', RED)}")
         return 1
@@ -800,8 +840,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--report",
+        nargs="?",
+        const=Path(".contextos/audit/verification_reports/latest.md"),
         type=Path,
-        help="write a markdown audit report to this path",
+        help=(
+            "write a markdown audit report to this path "
+            "(default when flag is present: .contextos/audit/verification_reports/latest.md)"
+        ),
     )
     parser.add_argument(
         "--session-context",

@@ -29,10 +29,13 @@ class ContextOSError(Exception):
 @dataclass(frozen=True)
 class ContextPacket:
     project: str
-    repo: str
+    repo: str | None
     branch: str
     task: str
     allowed_paths: tuple[str, ...]
+    protected_paths: tuple[str, ...] = ()
+    expected_head: str | None = None
+    source_label: str = "context_packet.yaml"
 
 
 @dataclass(frozen=True)
@@ -121,7 +124,7 @@ class ExecutionFreshnessResult:
     execution_blocked: bool
 
 
-REQUIRED_PACKET_FIELDS = ("project", "repo", "branch", "task", "allowed_paths")
+REQUIRED_PACKET_FIELDS = ("project", "allowed_paths")
 REQUIRED_ISSUE_PACKET_FIELDS = (
     "project",
     "repo",
@@ -305,7 +308,13 @@ def parse_context_packet_yaml(text: str) -> dict[str, object]:
     return parse_simple_yaml(
         text,
         source_name="context_packet.yaml",
-        list_fields={"allowed_paths"},
+        list_fields={
+            "allowed_paths",
+            "protected_paths",
+            "success_criteria",
+            "assumptions",
+            "risks",
+        },
     )
 
 
@@ -360,11 +369,35 @@ def load_context_packet(path: Path) -> ContextPacket:
         )
 
     scalar_fields: dict[str, str] = {}
-    for field in ("project", "repo", "branch", "task"):
+    for field in ("project",):
         value = packet[field]
         if not isinstance(value, str) or not value.strip():
             raise ContextOSError(f"context packet field '{field}' must be a string")
         scalar_fields[field] = value.strip()
+
+    repo = packet.get("repo")
+    if repo is not None:
+        if not isinstance(repo, str) or not repo.strip():
+            raise ContextOSError("context packet field 'repo' must be a string")
+        scalar_fields["repo"] = repo.strip()
+
+    branch = packet.get("branch", packet.get("expected_branch"))
+    if not isinstance(branch, str) or not branch.strip():
+        raise ContextOSError(
+            "context packet must include 'branch' or 'expected_branch'"
+        )
+    scalar_fields["branch"] = branch.strip()
+
+    task = packet.get("task", packet.get("objective"))
+    if not isinstance(task, str) or not task.strip():
+        raise ContextOSError("context packet must include 'task' or 'objective'")
+    scalar_fields["task"] = task.strip()
+
+    expected_head = packet.get("expected_head", packet.get("expected_HEAD"))
+    if expected_head is not None:
+        if not isinstance(expected_head, str) or not expected_head.strip():
+            raise ContextOSError("context packet field 'expected_head' must be a string")
+        scalar_fields["expected_head"] = expected_head.strip()
 
     allowed_paths = packet["allowed_paths"]
     if not isinstance(allowed_paths, list) or not allowed_paths:
@@ -385,12 +418,34 @@ def load_context_packet(path: Path) -> ContextPacket:
     if len(normalized_allowed_paths) != len(allowed_paths):
         raise ContextOSError("context packet allowed_paths entries must be strings")
 
+    protected_paths = packet.get("protected_paths", [])
+    if not isinstance(protected_paths, list):
+        raise ContextOSError("context packet field 'protected_paths' must be a list")
+    if not all(isinstance(path, str) for path in protected_paths):
+        raise ContextOSError("context packet protected_paths entries must be strings")
+    normalized_protected_paths = tuple(
+        dict.fromkeys(
+            normalize_repo_path(
+                path,
+                source="context packet protected_paths",
+            )
+            for path in protected_paths
+        )
+    )
+
     return ContextPacket(
         project=scalar_fields["project"],
-        repo=scalar_fields["repo"],
+        repo=scalar_fields.get("repo"),
         branch=scalar_fields["branch"],
         task=scalar_fields["task"],
         allowed_paths=normalized_allowed_paths,
+        protected_paths=normalized_protected_paths,
+        expected_head=scalar_fields.get("expected_head"),
+        source_label=(
+            "intent_contract.yaml"
+            if "objective" in packet or "expected_branch" in packet
+            else "context_packet.yaml"
+        ),
     )
 
 
@@ -595,16 +650,23 @@ def print_section(title: str, lines: Iterable[str]) -> None:
 
 
 def validate_packet_location(
-    packet: ContextPacket, actual_repo: str, actual_branch: str
+    packet: ContextPacket,
+    actual_repo: str,
+    actual_branch: str,
+    actual_head_hash: str,
 ) -> None:
     mismatch_reasons = []
-    if packet.repo != actual_repo:
+    if packet.repo is not None and packet.repo != actual_repo:
         mismatch_reasons.append(
             f"repo mismatch: expected {packet.repo}, actual {actual_repo}"
         )
     if packet.branch != actual_branch:
         mismatch_reasons.append(
             f"branch mismatch: expected {packet.branch}, actual {actual_branch}"
+        )
+    if packet.expected_head is not None and packet.expected_head != actual_head_hash:
+        mismatch_reasons.append(
+            f"HEAD mismatch: expected {packet.expected_head}, actual {actual_head_hash}"
         )
 
     if mismatch_reasons:
@@ -626,7 +688,7 @@ def write_session_context(
         "branch": actual_branch,
         "git_head_hash": actual_head_hash,
         "project": packet.project,
-        "repo": packet.repo,
+        "repo": packet.repo or actual_repo_root.name,
         "repo_root": str(actual_repo_root),
         "source": "chatgpt_context_packet",
         "task": packet.task,
@@ -645,6 +707,36 @@ def write_session_context(
         ) from error
 
 
+def render_policy_yaml(packet: ContextPacket) -> str:
+    lines = ["allowed_paths:"]
+    lines.extend(f"  - {path}" for path in packet.allowed_paths)
+    if packet.protected_paths:
+        lines.append("protected_paths:")
+        lines.extend(f"  - {path}" for path in packet.protected_paths)
+    return "\n".join(lines) + "\n"
+
+
+def write_default_verification_inputs(
+    *,
+    repo: Path,
+    packet: ContextPacket,
+) -> tuple[Path, Path]:
+    session_path = repo / "session.json"
+    policy_path = repo / "policy.yaml"
+    try:
+        session_path.write_text(
+            json.dumps({"expected_branch": packet.branch}, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        policy_path.write_text(render_policy_yaml(packet), encoding="utf-8")
+    except OSError as error:
+        raise ContextOSError(
+            f"could not write default verification inputs: {error}"
+        ) from error
+    return session_path, policy_path
+
+
 def ingest(packet_path: Path, repo: Path) -> int:
     packet = load_context_packet(packet_path)
     actual_repo_root = repo_root(repo)
@@ -654,10 +746,11 @@ def ingest(packet_path: Path, repo: Path) -> int:
 
     print("contextos ingest")
     print(f"packet: {packet_path}")
+    print(f"contract type: {packet.source_label}")
     print(f"repo: {actual_repo}")
     print(f"branch: {actual_branch}")
 
-    validate_packet_location(packet, actual_repo, actual_branch)
+    validate_packet_location(packet, actual_repo, actual_branch, actual_head_hash)
 
     output_path = actual_repo_root / ".contextos" / "session_context.json"
     write_session_context(
@@ -667,9 +760,16 @@ def ingest(packet_path: Path, repo: Path) -> int:
         actual_branch=actual_branch,
         actual_head_hash=actual_head_hash,
     )
+    session_path, policy_path = write_default_verification_inputs(
+        repo=actual_repo_root,
+        packet=packet,
+    )
 
     print_section("allowed paths:", packet.allowed_paths)
+    print_section("protected paths:", packet.protected_paths)
     print(f"session context: {output_path}")
+    print(f"session: {session_path}")
+    print(f"policy: {policy_path}")
     print("contextos ingest: PASSED")
     return 0
 
@@ -1682,8 +1782,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument(
         "--report",
+        nargs="?",
+        const=Path(".contextos/audit/verification_reports/latest.md"),
         type=Path,
-        help="write a markdown audit report to this path",
+        help=(
+            "write a markdown audit report to this path "
+            "(default when flag is present: .contextos/audit/verification_reports/latest.md)"
+        ),
     )
     verify_parser.add_argument(
         "--session-context",
