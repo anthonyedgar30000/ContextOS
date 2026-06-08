@@ -1,0 +1,41 @@
+task_id: CTX-0001
+project: ContextOS
+repo: ContextOS
+branch: main
+
+objective: Update ContextOS documentation and terminology to introduce Intent Contracts and Architecture Drift language without changing executable behavior.
+
+allowed_paths:
+
+- README.md
+- docs/
+
+protected_paths:
+
+- contextos.py
+- verify_cli.py
+- tests/
+- install_hooks.py
+- .github/
+- .contextos/audit/
+
+architecture_change_allowed: false
+
+success_criteria:
+
+- Intent Contract terminology documented
+- Architecture Drift terminology documented
+- Existing CLI behavior preserved
+- Existing tests continue to pass
+
+assumptions:
+
+- This is a documentation-only update
+- No verification logic changes are required
+
+risks:
+
+- Terminology changes could diverge from actual implementation
+- Product language must remain technically accurate
+
+human_approval_required: true

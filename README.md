@@ -135,6 +135,19 @@ allowed to do. ContextOS currently uses:
 - `policy.yaml` for allowed and protected paths
 - `session.json` for verification-time branch expectations
 
+### Intent Contracts and Architecture Drift
+
+Intent Contracts represent approved task boundaries. They record the objective,
+branch, allowed paths, protected paths, success criteria, assumptions, and risks
+that define what an AI-assisted mutation is permitted to change. ContextOS stores
+Intent Contracts under `.contextos/contracts/` so task boundaries can be reviewed
+as local documentation before any executable behavior changes.
+
+Architecture Drift is the condition where a proposed or local change no longer
+matches the approved Intent Contract or the documented execution boundary.
+ContextOS uses this language to describe scope, branch, or path mismatches
+without expanding verification beyond deterministic local files and Git state.
+
 ### Path-scope enforcement
 
 `allowed_paths` define the files or directories a task may change. Verification
@@ -191,6 +204,8 @@ passed or failed.
 ## Glossary
 
 - **Allowed path:** A file or directory pattern where task changes are permitted.
+- **Architecture Drift:** A mismatch between proposed or local changes and the
+  approved Intent Contract or documented execution boundary.
 - **Audit report:** A markdown file containing verification inputs, results, and
   violations.
 - **Context packet:** Reviewed task context provided as `context_packet.yaml`.
@@ -199,6 +214,8 @@ passed or failed.
 - **Freshness:** Whether current Git state still matches ingested context.
 - **Git authoritative state:** The local Git branch, HEAD, status, and diffs used
   as verification inputs.
+- **Intent Contract:** An approved task boundary stored under
+  `.contextos/contracts/`.
 - **Protected path:** A staged file path that should warn or block when touched.
 - **Session context:** The ingested `.contextos/session_context.json` file.
 - **Stale execution context:** A session context that no longer matches local Git
