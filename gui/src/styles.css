@@ -145,6 +145,68 @@ p {
   padding: 1.5rem;
 }
 
+.integration-toolbar {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 20px;
+  display: flex;
+  justify-content: space-between;
+  margin: 0 auto 1rem;
+  max-width: 1120px;
+  padding: 0.85rem 1rem;
+}
+
+.integration-toolbar > div {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.integration-toolbar strong {
+  color: #f8fafc;
+}
+
+.integration-toolbar small {
+  color: #94a3b8;
+}
+
+.integration-toolbar button {
+  background: linear-gradient(135deg, #0ea5e9, #6366f1);
+  border: 0;
+  border-radius: 14px;
+  color: #f8fafc;
+  font-weight: 900;
+  padding: 0.72rem 0.95rem;
+}
+
+.integration-toolbar button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.integration-error {
+  color: #fca5a5 !important;
+}
+
+.source-dot {
+  border-radius: 999px;
+  display: inline-flex;
+  height: 10px;
+  width: 10px;
+}
+
+.source-dot--live {
+  background: #22c55e;
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.62);
+}
+
+.source-dot--mock {
+  background: #f59e0b;
+  box-shadow: 0 0 18px rgba(245, 158, 11, 0.55);
+}
+
 .workspace-panel {
   display: grid;
   gap: 1rem;

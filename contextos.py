@@ -1628,12 +1628,36 @@ def render_change_classification_report(report: ChangeClassificationReport) -> s
     return "\n".join(lines)
 
 
+def change_classification_report_to_json(
+    report: ChangeClassificationReport,
+) -> dict[str, object]:
+    return {
+        "contract": str(report.contract_path),
+        "policy": str(report.policy_path),
+        "base": report.base,
+        "changed_files": list(report.changed_files),
+        "findings": [
+            {
+                "path": finding.path,
+                "classification": finding.classification,
+                "confidence": finding.confidence,
+                "reason": finding.reason,
+            }
+            for finding in report.findings
+        ],
+        "final_decision": report.final_decision,
+        "confidence": report.confidence,
+        "reason": report.reason,
+    }
+
+
 def classify_changes(
     *,
     repo: Path,
     contract_path: Path,
     policy_path: Path,
     base: str,
+    output_format: str = "terminal",
 ) -> int:
     root = repo_root(repo)
     resolved_contract_path = contract_path if contract_path.is_absolute() else root / contract_path
@@ -1649,7 +1673,10 @@ def classify_changes(
         contract=contract,
         policy=policy,
     )
-    print(render_change_classification_report(report))
+    if output_format == "json":
+        print(json.dumps(change_classification_report_to_json(report), indent=2))
+    else:
+        print(render_change_classification_report(report))
     return 0
 
 
@@ -2228,6 +2255,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="origin/main",
         help="base ref for git diff comparison (default: origin/main)",
     )
+    classify_parser.add_argument(
+        "--format",
+        choices=("terminal", "json"),
+        default="terminal",
+        help="output format (default: terminal)",
+    )
     subparsers.add_parser(
         "export-last-plan",
         help="export the latest local Cursor execution result for ChatGPT review",
@@ -2293,6 +2326,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 contract_path=args.contract,
                 policy_path=args.policy,
                 base=args.base,
+                output_format=args.format,
             )
         if args.command == "export-last-plan":
             return export_last_plan(args.repo)

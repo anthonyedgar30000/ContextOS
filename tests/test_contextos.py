@@ -1021,6 +1021,101 @@ class ClassifyChangesTests(unittest.TestCase):
             self.assertIn("Final decision:\nREVIEW_REQUIRED", output)
             self.assertIn("Confidence:\nREDUCED", output)
 
+    def test_classify_changes_cli_outputs_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "ContextOS"
+            repo.mkdir()
+            prepare_repo(repo)
+            (repo / ".contextos" / "contracts").mkdir(parents=True)
+            (repo / ".contextos" / "policies").mkdir(parents=True)
+            contract_path = repo / ".contextos" / "contracts" / "task.yaml"
+            policy_path = repo / ".contextos" / "policies" / "policy.yaml"
+            contract_path.write_text(
+                "allowed_paths:\n"
+                "- README.md\n",
+                encoding="utf-8",
+            )
+            policy_path.write_text(
+                "allowed:\n"
+                "  - path: docs/\n"
+                "review_required:\n"
+                "  - path: .contextos/policies/\n"
+                "    category: governance_metadata\n"
+                "blocked:\n"
+                "  - path: .env\n"
+                "default_action: review_required\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "add", "."],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "classifier fixtures"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            base_branch = git_current_branch(repo)
+            subprocess.run(
+                ["git", "checkout", "-b", "feature/classifier-json"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            (repo / "docs").mkdir()
+            (repo / "docs" / "example.md").write_text("example\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "."],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "json classifier fixtures"],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = contextos.main(
+                    [
+                        "--repo",
+                        str(repo),
+                        "classify-changes",
+                        "--contract",
+                        str(contract_path),
+                        "--policy",
+                        str(policy_path),
+                        "--base",
+                        base_branch,
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(
+                payload["final_decision"],
+                "POLICY_ALLOWED_WITH_REDUCED_CONFIDENCE",
+            )
+            self.assertEqual(payload["confidence"], "REDUCED")
+            self.assertEqual(payload["findings"][0]["path"], "docs/example.md")
+            self.assertEqual(
+                payload["findings"][0]["classification"],
+                "policy_allowed",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

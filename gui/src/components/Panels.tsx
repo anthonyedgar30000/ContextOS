@@ -33,7 +33,7 @@ function OverviewPanel({ data }: { data: ContextOSDesktopData }) {
       <PanelHeader
         eyebrow="Overview Dashboard"
         title="AI development observability"
-        description="A mock operating view across task intent, tokens, files, scope drift, and trust."
+        description="An operating view across task intent, tokens, files, scope drift, and trust."
       />
       <div className="metric-grid">
         <MetricCard label="Current Task" value={metrics.currentTask} />
@@ -64,7 +64,7 @@ function CurrentTaskPanel({ data }: { data: ContextOSDesktopData }) {
       <PanelHeader
         eyebrow="Current Task"
         title="Intent and agent activity"
-        description="The active user intent and a chronological view of mock agent behavior."
+        description="The active user intent and a chronological view of agent behavior."
       />
       <div className="stack">
         <article className="content-card">
@@ -118,7 +118,7 @@ function FilesPanel({ data }: { data: ContextOSDesktopData }) {
       <PanelHeader
         eyebrow="Files"
         title="Searchable file risk table"
-        description="Mock file observations across allowed, review-required, protected, and blocked statuses."
+        description="File observations across allowed, review-required, protected, and blocked statuses."
       />
       <label className="search-box">
         <span>Search files</span>
@@ -167,7 +167,7 @@ function ScopeAnalysisPanel({ data }: { data: ContextOSDesktopData }) {
       <PanelHeader
         eyebrow="Scope Analysis"
         title="Expected vs observed scope"
-        description="A mock drift score showing whether observed work stayed inside the intended GUI boundary."
+        description="A drift score showing whether observed work stayed inside the intended boundary."
       />
       <div className="scope-layout">
         <article className="content-card">

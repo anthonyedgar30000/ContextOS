@@ -133,3 +133,30 @@ export interface ContextOSDesktopData {
     signals: DetailSignal[];
   };
 }
+
+export interface ClassifierFinding {
+  path: string;
+  classification:
+    | "intent_allowed"
+    | "policy_allowed"
+    | "review_required"
+    | "blocked"
+    | "default_review_required";
+  confidence: "high" | "reduced" | "low";
+  reason: string;
+}
+
+export interface ClassifierReport {
+  contract: string;
+  policy: string;
+  base: string;
+  changed_files: string[];
+  findings: ClassifierFinding[];
+  final_decision:
+    | "BLOCKED"
+    | "REVIEW_REQUIRED"
+    | "POLICY_ALLOWED_WITH_REDUCED_CONFIDENCE"
+    | "COMPLIANT";
+  confidence: "LOW" | "REDUCED" | "HIGH";
+  reason: string;
+}
