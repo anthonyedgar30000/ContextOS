@@ -1,0 +1,18 @@
+[package]
+name = "contextos-gui"
+version = "0.1.0"
+description = "ContextOS desktop UI"
+authors = ["ContextOS"]
+edition = "2021"
+
+[lib]
+name = "contextos_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.2", features = [] }
+
+[dependencies]
+serde = "1.0.228"
+serde_json = "1.0.150"
+tauri = { version = "2.11.2", features = [] }
