@@ -11,7 +11,7 @@
 ## Sole write owner
 
 - Branch: `fix/helix-query-bridge-review-findings`
-- Pull request: resolve from live GitHub after creation
+- Pull request: **#14**
 - Owner: this bounded repair conversation
 - Other conversations: review-only unless ownership is explicitly transferred
 
@@ -29,7 +29,7 @@ Exactly seven paths:
 
 The parked PR #9 workflow `.github/workflows/contextos-ci.yml` is protected and not modified.
 
-## Findings being repaired
+## Findings repaired
 
 1. Accept current HELIX `project.active-work.v1` fields rather than requiring the obsolete synthetic `scope` field.
 2. Accept current ServiceTracer `project.active-work.v2` baseline, observation, authored-change, and bounded-grant shape.
@@ -37,6 +37,14 @@ The parked PR #9 workflow `.github/workflows/contextos-ci.yml` is protected and 
 4. Derive package completeness from requested capabilities and supplied evidence; missing required evidence must make the package explicitly incomplete.
 5. Add a dedicated read-only CI path with no overlap with parked PR #9.
 6. Preserve repository-native ownership, permitted paths, protected paths, verification criteria, and capability boundaries.
+
+## Local verification
+
+- `python -m py_compile helix_context.py`: passed.
+- `python -m unittest discover -s tests -v`: 15 focused bridge tests passed.
+- Pre-PR branch comparison: seven commits ahead, zero behind, exactly seven declared files.
+
+Local verification is not GitHub CI. The exact current PR head must receive a fresh workflow run after these PR-binding coordination commits.
 
 ## Authority boundary
 
@@ -50,12 +58,10 @@ This increment changes repository code, tests, documentation, CI, and coordinati
 - grant an AI shell or mutation authority;
 - write to HELIX, ServiceTracer, or Protocol Kernel repositories.
 
-## Verification sequence
+## Next gate
 
-1. focused local compile and unit tests;
-2. publish only the seven declared files;
-3. open a draft PR and bind its number into `.project`;
-4. obtain fresh CI for the resulting exact head;
-5. inspect every job and confirm the final diff remains exactly seven paths;
-6. record a read-only containment and evidence review;
-7. require a separate explicit merge decision.
+1. resolve PR #14's exact current head from live GitHub;
+2. obtain and inspect exact-head CI for that commit;
+3. confirm the complete PR diff remains exactly seven paths;
+4. perform a read-only containment and evidence review against the exact passing head;
+5. keep merge as a separate explicit decision.
