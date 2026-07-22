@@ -1,0 +1,46 @@
+name: HELIX Query Bridge CI
+
+on:
+  pull_request:
+    paths:
+      - helix_context.py
+      - tests/test_helix_context.py
+      - docs/HELIX_QUERY_BRIDGE.md
+      - .contextos/contracts/CTX-0003-helix-query-bridge-repair.yaml
+      - .github/workflows/helix-query-bridge-ci.yml
+      - .project/active-work.json
+      - .project/handoffs/current-state.md
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile bridge
+        run: python -m py_compile helix_context.py
+      - name: Run complete unit suite
+        run: python -m unittest discover -s tests -v
+      - name: Validate project ownership record
+        run: python -m json.tool .project/active-work.json >/dev/null
+      - name: Verify dedicated workflow ownership boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          state = json.loads(Path('.project/active-work.json').read_text())
+          workstream = state['workstreams'][0]
+          permitted = set(workstream['permitted_paths'])
+          assert '.github/workflows/helix-query-bridge-ci.yml' in permitted
+          assert '.github/workflows/contextos-ci.yml' in workstream['protected_paths']
+          assert workstream['capability_boundary']['cloud_mutation'] is False
+          assert workstream['capability_boundary']['credential_use'] is False
+          PY
