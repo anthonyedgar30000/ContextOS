@@ -108,7 +108,6 @@ class HelixContextTests(unittest.TestCase):
                 "scope": "Repair read-only planner evidence handling.",
                 "authority": "repository_only",
                 "state_semantics": "declaration_not_live_status",
-                "status": "authored_change_declaration",
                 "permitted_paths": ["infra/scripts/planner.sh"],
                 "verification_criteria": ["exact-head CI"],
                 "failure_behavior": "Keep draft and fail closed.",
@@ -271,6 +270,31 @@ class HelixContextTests(unittest.TestCase):
         self.assertFalse(
             sanitized["bounded_authority_grants"][0]["azure_mutations_authorized"]
         )
+
+    def test_v2_authored_change_without_status_uses_state_semantics(self) -> None:
+        sanitized = helix_context.sanitize_project_state(self.project_state_v2)
+        self.assertEqual(
+            sanitized["workstreams"][0]["status"],
+            "declaration_not_live_status",
+        )
+
+    def test_nested_api_key_field_is_rejected(self) -> None:
+        unsafe = copy.deepcopy(self.environment_state)
+        unsafe["facts"][0]["value"]["metadata"]["api_key"] = "not-safe"
+        with self.assertRaisesRegex(
+            helix_context.HelixContextError, "sensitive field name"
+        ):
+            helix_context.sanitize_environment_state(unsafe)
+
+    def test_credential_prefix_value_is_rejected(self) -> None:
+        unsafe = copy.deepcopy(self.environment_state)
+        unsafe["facts"][0]["value"]["metadata"]["opaque"] = (
+            "sk-1234567890abcdefghijklmnop"
+        )
+        with self.assertRaisesRegex(
+            helix_context.HelixContextError, "credential-like value"
+        ):
+            helix_context.sanitize_environment_state(unsafe)
 
     def test_recursive_environment_secret_is_rejected(self) -> None:
         unsafe = copy.deepcopy(self.environment_state)
