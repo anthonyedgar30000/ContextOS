@@ -20,9 +20,9 @@
     {
       "workstream_id": "helix-query-bridge-review-remediation",
       "branch": "fix/helix-query-bridge-review-findings",
-      "pull_request": null,
+      "pull_request": 14,
       "write_owner": "ChatGPT Project Reality Synchronizer conversation — bounded ContextOS repair authorized by Anthony Edgar with 'Proceed'",
-      "status": "implementation_in_progress",
+      "status": "ci_pending",
       "objective": "Repair the merged PR 13 bridge findings through current-shape compatibility, recursive evidence bounds, honest completeness semantics, a dedicated non-conflicting CI workflow, and repository-native ownership records.",
       "permitted_paths": [
         "helix_context.py",
@@ -66,7 +66,7 @@
         "the exact diff remains limited to the seven declared paths",
         "the dedicated workflow path does not overlap parked PR 9 contextos-ci.yml"
       ],
-      "next_gate": "Open a draft pull request, bind its number into this declaration, obtain exact-head CI, inspect every job, and perform a read-only evidence/containment review. Keep merge as a separate explicit decision.",
+      "next_gate": "Obtain exact-head CI for PR 14, inspect every job, confirm the final diff remains exactly seven paths, and record a read-only evidence/containment review. Keep merge as a separate explicit decision.",
       "authority_expiry_condition": "This write claim expires automatically when the repair pull request closes or merges."
     }
   ],
