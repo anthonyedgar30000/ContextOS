@@ -1,0 +1,51 @@
+task_id: CTX-0003
+project: ContextOS
+repo: ContextOS
+branch: fix/helix-query-bridge-review-findings
+
+objective: Repair the merged HELIX query bridge so it accepts current governed project-state shapes, recursively constrains nested evidence, derives honest capability-to-evidence completeness, receives dedicated exact-head CI, and records repository-native ownership without granting runtime or mutation authority.
+
+allowed_paths:
+- helix_context.py
+- tests/test_helix_context.py
+- docs/HELIX_QUERY_BRIDGE.md
+- .contextos/contracts/CTX-0003-helix-query-bridge-repair.yaml
+- .github/workflows/helix-query-bridge-ci.yml
+- .project/active-work.json
+- .project/handoffs/current-state.md
+
+protected_paths:
+- .github/workflows/contextos-ci.yml
+- contextos.py
+- verify_cli.py
+- install_hooks.py
+- gui/
+- .contextos/policies/
+- .contextos/audit/
+- deployment/
+- runtime/
+
+architecture_change_allowed: true
+
+success_criteria:
+- project.active-work.v1 accepts HELIX objective/permitted_paths/protected_paths/capability_boundary/verification_criteria shapes
+- project.active-work.v2 accepts ServiceTracer last_substantive_baseline/repository_observation/authored_change/bounded_authority_grants shapes
+- nested evidence rejects secret-like keys, excessive depth or size, unsupported values, and non-finite numbers
+- ServiceTracer backend states and failure rates are bounded and typed
+- package completeness is derived from requested capabilities and supplied evidence and cannot be falsified by rehashing
+- the dedicated workflow does not overlap parked PR 9 contextos-ci.yml ownership
+- repository-native active-work and handoff records declare the branch, permitted paths, protected paths, and authority boundary
+- focused and complete repository tests pass in exact-head GitHub Actions
+- the package never grants mutation authority or claims an authorized decision
+
+assumptions:
+- live GitHub state outranks historical PR 13 documentation
+- request-only capabilities remain requests and do not prove that inventory or What-If executed
+- source evidence freshness and truthfulness remain separate from package structural validity
+
+risks:
+- compatibility with future project-state schema generations requires a new bounded increment
+- recursive bounds may reject previously accepted oversized or weakly structured evidence
+- owner-account review cannot represent independent organizational approval
+
+human_approval_required: true
