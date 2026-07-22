@@ -36,9 +36,12 @@ MAX_WORKSTREAMS = 50
 MAX_CHANGED_PATHS = 500
 
 SENSITIVE_KEY_SEGMENTS = {
+    "accesskey",
+    "apikey",
     "authorization",
     "bearer",
     "clientsecret",
+    "connectionstring",
     "credential",
     "credentials",
     "password",
@@ -199,6 +202,23 @@ def _is_sensitive_key(value: str) -> bool:
     return any(segment in normalized for segment in SENSITIVE_KEY_SEGMENTS)
 
 
+SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"^Bearer\s+\S+", re.IGNORECASE),
+    re.compile(r"^sk-[A-Za-z0-9_-]{16,}$"),
+    re.compile(r"^gh[pousr]_[A-Za-z0-9]{20,}$"),
+    re.compile(r"^github_pat_[A-Za-z0-9_]{20,}$"),
+    re.compile(r"^AKIA[0-9A-Z]{16}$"),
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+)
+
+
+def _contains_sensitive_value(value: str) -> bool:
+    if any(pattern.search(value) for pattern in SENSITIVE_VALUE_PATTERNS):
+        return True
+    lowered = value.lower()
+    return "sig=" in lowered and ("sv=" in lowered or "se=" in lowered)
+
+
 def _sanitize_json_value(
     value: Any,
     *,
@@ -219,6 +239,8 @@ def _sanitize_json_value(
             raise HelixContextError(f"{field} contains a non-finite number")
         return value
     if isinstance(value, str):
+        if _contains_sensitive_value(value):
+            raise HelixContextError(f"{field} contains a credential-like value")
         if len(value) > maximum_string:
             raise HelixContextError(
                 f"{field} string exceeds {maximum_string} characters"
@@ -372,6 +394,10 @@ def _sanitize_baseline(value: Mapping[str, Any], *, schema: str) -> dict[str, An
 def _sanitize_workstream(item: Mapping[str, Any], *, index: int) -> dict[str, Any]:
     prefix = f"workstreams[{index}]"
     objective = item.get("objective") if item.get("objective") is not None else item.get("scope")
+    status = item.get("status") or item.get("state_semantics") or "declared_change"
+    verification = item.get("verification_criteria")
+    if verification is None:
+        verification = item.get("acceptance_criteria")
     return {
         "workstream_id": bounded_text(
             item.get("workstream_id") or item.get("change_id"),
@@ -385,7 +411,7 @@ def _sanitize_workstream(item: Mapping[str, Any], *, index: int) -> dict[str, An
         "write_owner": optional_text(
             item.get("write_owner"), field=f"{prefix}.write_owner", maximum=300
         ),
-        "status": bounded_text(item.get("status"), field=f"{prefix}.status", maximum=150),
+        "status": bounded_text(status, field=f"{prefix}.status", maximum=150),
         "objective": bounded_text(objective, field=f"{prefix}.objective", maximum=4000),
         "authority": optional_text(
             item.get("authority"), field=f"{prefix}.authority", maximum=300
@@ -411,7 +437,7 @@ def _sanitize_workstream(item: Mapping[str, Any], *, index: int) -> dict[str, An
             else None
         ),
         "verification_criteria": _string_list(
-            item.get("verification_criteria"),
+            verification,
             field=f"{prefix}.verification_criteria",
             maximum_items=100,
             maximum_string=2000,
