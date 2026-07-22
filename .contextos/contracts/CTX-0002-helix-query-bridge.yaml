@@ -1,0 +1,44 @@
+task_id: CTX-0002
+project: ContextOS
+repo: ContextOS
+branch: feature/helix-query-bridge
+
+objective: Add a read-only ContextOS bridge that packages Git state, workflow state, environment facts, and bounded ServiceTracer findings for HELIX reasoning nodes without granting mutation authority.
+
+allowed_paths:
+- helix_context.py
+- tests/test_helix_context.py
+- docs/HELIX_QUERY_BRIDGE.md
+- .github/workflows/contextos-ci.yml
+- .contextos/contracts/CTX-0002-helix-query-bridge.yaml
+
+protected_paths:
+- contextos.py
+- verify_cli.py
+- install_hooks.py
+- .contextos/policies/
+- .contextos/audit/
+
+architecture_change_allowed: true
+
+success_criteria:
+- A package can be built entirely from local files and local Git state
+- Source files receive provenance hashes
+- The package receives a canonical JSON integrity hash and expiry
+- Unknown source fields are dropped by allowlist sanitizers
+- Unsupported capabilities are rejected
+- ServiceTracer exact-root-cause claims are rejected
+- The package never grants mutation authority
+- Tests and CI pass
+
+assumptions:
+- project.active-work.v1 and project.environment-state.v1 are repository-native input contracts
+- ServiceTracer technician-handoff reports preserve the existing bounded investigation contract
+- This increment does not invoke HELIX Protocol Kernel as a runtime dependency
+
+risks:
+- A bridge-specific schema could drift from the HELIX Protocol Kernel
+- Declared environment facts may become stale unless observers refresh them
+- Request-only capabilities must not be confused with executable credentials
+
+human_approval_required: true
