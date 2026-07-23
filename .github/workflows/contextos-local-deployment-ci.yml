@@ -8,6 +8,7 @@ on:
       - deployment/verify-contextos.sh
       - deployment/uninstall-contextos.sh
       - .github/workflows/contextos-local-deployment-ci.yml
+      - .github/workflows/helix-query-bridge-ci.yml
       - .contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml
       - .project/active-work.json
       - .project/handoffs/current-state.md
@@ -48,10 +49,18 @@ jobs:
           from pathlib import Path
 
           state = json.loads(Path('.project/active-work.json').read_text(encoding='utf-8'))
-          workstream = state['workstreams'][0]
+          matches = [
+              workstream
+              for workstream in state.get('workstreams', [])
+              if workstream.get('workstream_id') == 'contextos-local-deployment-readiness'
+          ]
+          assert len(matches) == 1, 'deployment readiness must have exactly one declared workstream'
+          workstream = matches[0]
           permitted = set(workstream['permitted_paths'])
           assert workstream['branch'] == 'deploy/contextos-local-readiness'
+          assert workstream['pull_request'] == 15
           assert '.github/workflows/contextos-local-deployment-ci.yml' in permitted
+          assert '.github/workflows/helix-query-bridge-ci.yml' in permitted
           boundary = workstream['capability_boundary']
           assert boundary['pull_request_merge'] is False
           assert boundary['host_install_execution'] is False
