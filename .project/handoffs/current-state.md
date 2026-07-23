@@ -34,18 +34,19 @@ This does not create an always-on process, public endpoint, cloud workload, auto
 
 ## Declared scope
 
-Exactly eight paths:
+Exactly nine paths:
 
 1. `deployment/README.md`
 2. `deployment/install-contextos.sh`
 3. `deployment/verify-contextos.sh`
 4. `deployment/uninstall-contextos.sh`
 5. `.github/workflows/contextos-local-deployment-ci.yml`
-6. `.contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml`
-7. `.project/active-work.json`
-8. `.project/handoffs/current-state.md`
+6. `.github/workflows/helix-query-bridge-ci.yml`
+7. `.contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml`
+8. `.project/active-work.json`
+9. `.project/handoffs/current-state.md`
 
-Core ContextOS code, tests, existing workflows, the HELIX bridge, runtime directories, cloud configuration, credentials, and external repositories are protected.
+Core ContextOS code, tests, the HELIX bridge implementation, its documentation and contract, the parked workflow, runtime directories, cloud configuration, credentials, and external repositories are protected.
 
 ## Deployment model implemented
 
@@ -58,6 +59,25 @@ Core ContextOS code, tests, existing workflows, the HELIX bridge, runtime direct
 - Verification: exact commit and clean-tree binding, state-shape validation, CLI help, deterministic `READ_ONLY` explanation for `git status`, and complete unit suite.
 - Rollback: remove only the managed launcher and deployment evidence; preserve the source checkout and repository data.
 
+## Reality-synchronization finding during CI
+
+The first exact-head deployment workflow passed, but the existing `HELIX Query Bridge CI` failed on the same head even though no HELIX implementation file changed.
+
+Root cause:
+
+- that workflow intentionally triggers when shared project ownership files change;
+- its ownership assertion assumed `state['workstreams'][0]` always belonged to the HELIX bridge;
+- replacing the completed HELIX workstream with the current deployment workstream caused a false ownership failure.
+
+Bounded remediation:
+
+- the HELIX workflow now searches for a workstream that explicitly permits `.github/workflows/helix-query-bridge-ci.yml`;
+- it requires exactly one owner when claimed;
+- it exits successfully with an explicit message when unrelated coordination does not claim that workflow;
+- the deployment workflow selects its own workstream by `workstream_id` rather than array position.
+
+This changes workflow ownership resolution only. It does not enable, invoke, or alter `helix_context.py` package behavior.
+
 ## Authority boundary
 
 This increment may create repository files and a draft pull request only. It does not:
@@ -67,8 +87,8 @@ This increment may create repository files and a draft pull request only. It doe
 - require `sudo` or modify system directories;
 - enable or invoke `helix_context.py`;
 - use credentials;
-- call GitHub, Azure, HELIX, or another external API;
-- mutate cloud resources or remote repositories;
+- call GitHub, Azure, HELIX, or another external API at runtime;
+- mutate cloud resources or external repositories;
 - authorize merge.
 
 ## Verification required
@@ -77,14 +97,16 @@ This increment may create repository files and a draft pull request only. It doe
 2. assert prohibited privileged, network, cloud, GitHub CLI, and HELIX bridge commands are absent;
 3. exercise default install, verification, and rollback under an isolated temporary `HOME`;
 4. run the complete ContextOS unit suite on the exact pull-request head;
-5. confirm the complete pull-request diff remains exactly the eight declared paths;
-6. inspect the exact generated launcher and deployment evidence semantics;
-7. retain actual host installation as a separate explicit human gate.
+5. prove the HELIX workflow resolves ownership by declared workflow path rather than array position;
+6. obtain success from both dedicated workflows on the same exact head;
+7. confirm the complete pull-request diff remains exactly the nine declared paths;
+8. inspect the exact generated launcher and deployment evidence semantics;
+9. retain actual host installation as a separate explicit human gate.
 
 ## Next gate
 
 1. resolve PR #15's exact current head from live GitHub;
-2. obtain and inspect exact-head GitHub Actions results;
-3. confirm the final diff remains exactly the eight declared paths;
-4. perform a deployment-safety and rollback review against that exact head;
+2. obtain and inspect exact-head results for both dedicated workflows;
+3. confirm the final diff remains exactly the nine declared paths;
+4. perform a deployment-safety, workflow-isolation, and rollback review against that exact head;
 5. after a separate merge decision, choose the actual Linux or WSL checkout and explicitly authorize running the installer there.
