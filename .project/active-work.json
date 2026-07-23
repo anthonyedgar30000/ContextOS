@@ -1,0 +1,87 @@
+{
+  "schema_version": "project.active-work.v1",
+  "project": "ContextOS — HELIX Query Bridge Repair",
+  "updated_on": "2026-07-22",
+  "resolution_rules": {
+    "current_default_branch_head": "Resolve from live GitHub metadata.",
+    "pull_request_state": "Resolve from live GitHub metadata.",
+    "ci_and_reviews": "Resolve from exact-head GitHub workflow and review metadata.",
+    "temporary_write_authority": "Valid only for the declared branch, open pull request, and permitted paths; expires when the pull request closes or merges."
+  },
+  "trusted_baseline": {
+    "branch": "main",
+    "commit": "d366bf0431716d0c87cd548a42db5810c76f0ccc",
+    "last_completed_increment": {
+      "pull_request": 13,
+      "title": "Add bounded HELIX query bridge for ServiceTracer context"
+    }
+  },
+  "workstreams": [
+    {
+      "workstream_id": "helix-query-bridge-review-remediation",
+      "branch": "fix/helix-query-bridge-review-findings",
+      "pull_request": 14,
+      "write_owner": "ChatGPT Project Reality Synchronizer conversation — bounded ContextOS repair authorized by Anthony Edgar with 'Proceed'",
+      "status": "ci_pending",
+      "objective": "Repair the merged PR 13 bridge findings through current-shape compatibility, recursive evidence bounds, honest completeness semantics, a dedicated non-conflicting CI workflow, and repository-native ownership records.",
+      "permitted_paths": [
+        "helix_context.py",
+        "tests/test_helix_context.py",
+        "docs/HELIX_QUERY_BRIDGE.md",
+        ".contextos/contracts/CTX-0003-helix-query-bridge-repair.yaml",
+        ".github/workflows/helix-query-bridge-ci.yml",
+        ".project/active-work.json",
+        ".project/handoffs/current-state.md"
+      ],
+      "protected_paths": [
+        ".github/workflows/contextos-ci.yml",
+        "contextos.py",
+        "verify_cli.py",
+        "install_hooks.py",
+        "gui/**",
+        ".contextos/policies/**",
+        ".contextos/audit/**",
+        "deployment/**",
+        "runtime/**",
+        "**/*credential*",
+        "**/*secret*"
+      ],
+      "capability_boundary": {
+        "repository_writes": "Only the seven declared paths on fix/helix-query-bridge-review-findings",
+        "pull_request_creation": true,
+        "pull_request_merge": false,
+        "workflow_scope": "Local compile, tests, JSON parsing, and ownership-boundary assertion only",
+        "external_api_calls": false,
+        "runtime_execution": false,
+        "cloud_mutation": false,
+        "credential_use": false,
+        "external_repository_writes": false
+      },
+      "verification_criteria": [
+        "project.active-work.v1 live HELIX shape fixture passes",
+        "project.active-work.v2 live ServiceTracer shape fixture passes",
+        "recursive nested secret, depth, size, and non-finite-number tests pass",
+        "requested capability versus supplied evidence completeness tests pass",
+        "all repository tests pass on the exact pull-request head",
+        "the exact diff remains limited to the seven declared paths",
+        "the dedicated workflow path does not overlap parked PR 9 contextos-ci.yml"
+      ],
+      "next_gate": "Obtain exact-head CI for PR 14, inspect every job, confirm the final diff remains exactly seven paths, and record a read-only evidence/containment review. Keep merge as a separate explicit decision.",
+      "authority_expiry_condition": "This write claim expires automatically when the repair pull request closes or merges."
+    }
+  ],
+  "known_open_pull_requests": [
+    {
+      "pull_request": 9,
+      "title": "Add minimal ContextOS CI workflow and governance documentation",
+      "status": "parked_draft_historical_overlap",
+      "action": "Do not modify or claim .github/workflows/contextos-ci.yml in this workstream."
+    },
+    {
+      "pull_request": 12,
+      "title": "Add Tauri React desktop GUI",
+      "status": "parked_draft_unrelated_scope",
+      "action": "Review-only; no overlapping permitted paths."
+    }
+  ]
+}
