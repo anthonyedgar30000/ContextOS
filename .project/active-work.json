@@ -24,13 +24,14 @@
       "pull_request": 15,
       "write_owner": "ChatGPT ContextOS deployment conversation — bounded repository deployment-readiness authorized by Anthony Edgar with 'Proceed'",
       "status": "ci_pending",
-      "objective": "Provide an idempotent, evidence-producing, user-scoped installation and rollback path for the deterministic ContextOS CLI on Linux or WSL without deploying a daemon, enabling the HELIX bridge, using credentials, or mutating external systems.",
+      "objective": "Provide an idempotent, evidence-producing, user-scoped installation and rollback path for the deterministic ContextOS CLI on Linux or WSL without deploying a daemon, enabling the HELIX bridge, using credentials, or mutating external systems; isolate the dedicated HELIX workflow from unrelated project-state ownership updates.",
       "permitted_paths": [
         "deployment/README.md",
         "deployment/install-contextos.sh",
         "deployment/verify-contextos.sh",
         "deployment/uninstall-contextos.sh",
         ".github/workflows/contextos-local-deployment-ci.yml",
+        ".github/workflows/helix-query-bridge-ci.yml",
         ".contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml",
         ".project/active-work.json",
         ".project/handoffs/current-state.md"
@@ -44,7 +45,6 @@
         "tests/**",
         "docs/HELIX_QUERY_BRIDGE.md",
         ".github/workflows/contextos-ci.yml",
-        ".github/workflows/helix-query-bridge-ci.yml",
         "runtime/**",
         "cloud/**",
         "infra/**",
@@ -53,10 +53,10 @@
         "**/*secret*"
       ],
       "capability_boundary": {
-        "repository_writes": "Only the eight declared paths on deploy/contextos-local-readiness",
+        "repository_writes": "Only the nine declared paths on deploy/contextos-local-readiness",
         "pull_request_creation": true,
         "pull_request_merge": false,
-        "workflow_scope": "Script syntax checks, authority-boundary assertions, isolated temporary-HOME install/verify/uninstall, and the complete repository unit suite",
+        "workflow_scope": "Script syntax checks, authority-boundary assertions, isolated temporary-HOME install/verify/uninstall, complete repository tests, and selection-based isolation of the existing HELIX workflow ownership assertion",
         "host_install_execution": false,
         "runtime_execution": false,
         "system_service_install": false,
@@ -74,9 +74,11 @@
         "rollback removes only the managed launcher and deployment evidence",
         "the complete repository unit suite passes on the exact pull-request head",
         "deployment scripts contain no sudo, systemctl, network download, cloud CLI, GitHub CLI, credential, or HELIX bridge invocation",
-        "the complete pull-request diff remains exactly the eight declared paths"
+        "the HELIX workflow no longer assumes workstreams[0] and does not fail unrelated coordination-only ownership changes",
+        "both dedicated workflows pass on the same exact pull-request head",
+        "the complete pull-request diff remains exactly the nine declared paths"
       ],
-      "next_gate": "Obtain exact-head CI for PR 15, inspect the complete eight-path diff, and perform a deployment-safety and rollback review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
+      "next_gate": "Obtain exact-head CI for PR 15 from both dedicated workflows, inspect the complete nine-path diff, and perform a deployment-safety, workflow-isolation, and rollback review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
       "authority_expiry_condition": "This repository write claim expires automatically when PR 15 closes or merges."
     }
   ],
