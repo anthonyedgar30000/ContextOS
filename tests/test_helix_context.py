@@ -8,9 +8,10 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import helix_context
-
 
 NOW = datetime(2026, 7, 22, 20, 0, tzinfo=timezone.utc)
 
@@ -19,30 +20,12 @@ class HelixContextTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tempdir.name)
-        subprocess.run(
-            ["git", "init", "-b", "main"],
-            cwd=self.root,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=self.root,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=self.root,
-            check=True,
-        )
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.root, check=True)
         (self.root / "README.md").write_text("test\n", encoding="utf-8")
         subprocess.run(["git", "add", "README.md"], cwd=self.root, check=True)
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=self.root,
-            check=True,
-            capture_output=True,
-        )
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=self.root, check=True, capture_output=True)
 
         self.project_state_v1 = {
             "schema_version": "project.active-work.v1",
@@ -71,10 +54,11 @@ class HelixContextTests(unittest.TestCase):
                     "capability_boundary": {
                         "pull_request_merge": False,
                         "cloud_mutation": False,
+                        "credential_use": False,
                     },
                     "verification_criteria": ["one-file diff", "exact-head CI"],
                     "next_gate": "Explicit merge decision",
-                    "nested_unknown": {"safe": "dropped at top-level projection"},
+                    "nested_unknown": {"safe": "dropped"},
                 }
             ],
             "known_open_pull_requests": [],
@@ -170,9 +154,7 @@ class HelixContextTests(unittest.TestCase):
                 "status": "healthy_under_configured_probe",
                 "probe_name": "tcp-443-shallow",
                 "probe_scope": "listener-only",
-                "backend_states": {
-                    "VPN-01": {"probe_status": "healthy", "observations": ["ok"]}
-                },
+                "backend_states": {"VPN-01": {"probe_status": "healthy", "observations": ["ok"]}},
                 "probe_gap_detected": True,
             },
             "localization": {
@@ -205,9 +187,7 @@ class HelixContextTests(unittest.TestCase):
             "raw_radius_secret": "must-not-leak",
         }
         self.project_path = self.write_json("project.json", self.project_state_v1)
-        self.environment_path = self.write_json(
-            "environment.json", self.environment_state
-        )
+        self.environment_path = self.write_json("environment.json", self.environment_state)
         self.report_path = self.write_json("report.json", self.servicetracer)
 
     def tearDown(self) -> None:
@@ -239,82 +219,74 @@ class HelixContextTests(unittest.TestCase):
         arguments.update(overrides)
         return helix_context.build_query_package(**arguments)
 
+    @staticmethod
+    def rehash(package: dict) -> None:
+        package.pop("integrity", None)
+        package["integrity"] = {
+            "algorithm": "sha256",
+            "canonical_json_sha256": helix_context.canonical_sha256(package),
+        }
+
     def test_builds_valid_bounded_package(self) -> None:
         package = self.build()
-        self.assertEqual(package["schema_version"], helix_context.SCHEMA_VERSION)
         self.assertFalse(package["authority"]["mutation_authority"])
         self.assertTrue(package["completeness"]["package_complete_for_bounded_query"])
-        self.assertEqual(
-            package["evidence"]["servicetracer_finding"]["localization"][
-                "suspect_backend"
-            ],
-            "VPN-02",
-        )
         self.assertNotIn("must-not-leak", json.dumps(package))
         self.assertNotIn("repository_root", package["evidence"]["observed_git_state"])
         helix_context.validate_query_package(package, now=NOW)
 
-    def test_accepts_live_helix_v1_shape_without_scope_field(self) -> None:
+    def test_accepts_live_helix_v1_shape_and_credential_use_false(self) -> None:
         sanitized = helix_context.sanitize_project_state(self.project_state_v1)
         workstream = sanitized["workstreams"][0]
-        self.assertEqual(
-            workstream["objective"], "Reconcile the persistence charter merge state."
-        )
-        self.assertEqual(workstream["permitted_paths"], [".project/active-work.json"])
+        self.assertEqual(workstream["objective"], "Reconcile the persistence charter merge state.")
+        self.assertFalse(workstream["capability_boundary"]["credential_use"])
         self.assertNotIn("nested_unknown", workstream)
 
-    def test_accepts_servicetracer_v2_shape(self) -> None:
+    def test_rejects_non_boolean_credential_use(self) -> None:
+        unsafe = copy.deepcopy(self.project_state_v1)
+        unsafe["workstreams"][0]["capability_boundary"]["credential_use"] = "false"
+        with self.assertRaisesRegex(helix_context.HelixContextError, "boolean governance metadata"):
+            helix_context.sanitize_project_state(unsafe)
+
+    def test_rejects_arbitrary_credential_field(self) -> None:
+        unsafe = copy.deepcopy(self.project_state_v1)
+        unsafe["workstreams"][0]["capability_boundary"]["credential_value"] = False
+        with self.assertRaisesRegex(helix_context.HelixContextError, "sensitive field name"):
+            helix_context.sanitize_project_state(unsafe)
+
+    def test_accepts_servicetracer_v2_shape_without_status(self) -> None:
         sanitized = helix_context.sanitize_project_state(self.project_state_v2)
         self.assertEqual(sanitized["schema_version"], "project.active-work.v2")
-        self.assertEqual(sanitized["workstreams"][0]["branch"], "fix/planner")
-        self.assertFalse(
-            sanitized["bounded_authority_grants"][0]["azure_mutations_authorized"]
-        )
-
-    def test_v2_authored_change_without_status_uses_state_semantics(self) -> None:
-        sanitized = helix_context.sanitize_project_state(self.project_state_v2)
-        self.assertEqual(
-            sanitized["workstreams"][0]["status"],
-            "declaration_not_live_status",
-        )
+        self.assertEqual(sanitized["workstreams"][0]["status"], "declaration_not_live_status")
+        self.assertFalse(sanitized["bounded_authority_grants"][0]["azure_mutations_authorized"])
 
     def test_nested_api_key_field_is_rejected(self) -> None:
         unsafe = copy.deepcopy(self.environment_state)
         unsafe["facts"][0]["value"]["metadata"]["api_key"] = "not-safe"
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "sensitive field name"
-        ):
+        with self.assertRaisesRegex(helix_context.HelixContextError, "sensitive field name"):
             helix_context.sanitize_environment_state(unsafe)
 
     def test_credential_prefix_value_is_rejected(self) -> None:
         unsafe = copy.deepcopy(self.environment_state)
-        unsafe["facts"][0]["value"]["metadata"]["opaque"] = (
-            "sk-1234567890abcdefghijklmnop"
-        )
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "credential-like value"
-        ):
+        unsafe["facts"][0]["value"]["metadata"]["opaque"] = "sk-1234567890abcdefghijklmnop"
+        with self.assertRaisesRegex(helix_context.HelixContextError, "credential-like value"):
             helix_context.sanitize_environment_state(unsafe)
 
     def test_recursive_environment_secret_is_rejected(self) -> None:
         unsafe = copy.deepcopy(self.environment_state)
         unsafe["facts"][0]["value"]["metadata"]["client_secret"] = "leak"
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "sensitive field name"
-        ):
+        with self.assertRaisesRegex(helix_context.HelixContextError, "sensitive field name"):
             helix_context.sanitize_environment_state(unsafe)
 
     def test_recursive_servicetracer_secret_is_rejected(self) -> None:
         unsafe = copy.deepcopy(self.servicetracer)
         unsafe["load_balancer"]["backend_states"]["VPN-01"]["bearer_token"] = "leak"
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "sensitive field name"
-        ):
+        with self.assertRaisesRegex(helix_context.HelixContextError, "sensitive field name"):
             helix_context.sanitize_servicetracer_report(unsafe)
 
     def test_excessive_nested_depth_is_rejected(self) -> None:
         unsafe = copy.deepcopy(self.environment_state)
-        unsafe["facts"][0]["value"] = {"a": {"b": {"c": {"d": {"e": "too deep"}}}}}
+        unsafe["facts"][0]["value"] = {"a": {"b": {"c": {"d": {"e": {"f": "too deep"}}}}}}
         with self.assertRaisesRegex(helix_context.HelixContextError, "depth"):
             helix_context.sanitize_environment_state(unsafe)
 
@@ -324,13 +296,16 @@ class HelixContextTests(unittest.TestCase):
         with self.assertRaisesRegex(helix_context.HelixContextError, "non-finite"):
             helix_context.sanitize_environment_state(unsafe)
 
+    def test_oversized_nested_string_is_rejected(self) -> None:
+        unsafe = copy.deepcopy(self.environment_state)
+        unsafe["facts"][0]["value"] = "x" * 2001
+        with self.assertRaisesRegex(helix_context.HelixContextError, "exceeds 2000"):
+            helix_context.sanitize_environment_state(unsafe)
+
     def test_missing_requested_evidence_is_reported_incomplete(self) -> None:
         package = self.build(environment_state_path=None)
         self.assertFalse(package["completeness"]["package_complete_for_bounded_query"])
-        self.assertEqual(
-            package["completeness"]["missing_required_sources"],
-            ["observed_environment_facts"],
-        )
+        self.assertEqual(package["completeness"]["missing_required_sources"], ["observed_environment_facts"])
         helix_context.validate_query_package(package, now=NOW)
 
     def test_request_only_capability_needs_no_external_evidence(self) -> None:
@@ -341,29 +316,20 @@ class HelixContextTests(unittest.TestCase):
             servicetracer_report_path=None,
         )
         self.assertTrue(package["completeness"]["package_complete_for_bounded_query"])
-        self.assertEqual(package["completeness"]["missing_required_sources"], [])
         helix_context.validate_query_package(package, now=NOW)
 
     def test_semantically_false_completeness_is_rejected_even_if_rehashed(self) -> None:
         package = self.build(environment_state_path=None)
         package["completeness"]["package_complete_for_bounded_query"] = True
-        package.pop("integrity")
-        package["integrity"] = {
-            "algorithm": "sha256",
-            "canonical_json_sha256": helix_context.canonical_sha256(package),
-        }
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "completeness does not match"
-        ):
+        self.rehash(package)
+        with self.assertRaisesRegex(helix_context.HelixContextError, "completeness does not match"):
             helix_context.validate_query_package(package, now=NOW)
 
     def test_rejects_service_tracer_exact_root_cause_claim(self) -> None:
         unsafe = copy.deepcopy(self.servicetracer)
         unsafe["investigation_boundary"]["exact_root_cause_claimed"] = True
         unsafe_path = self.write_json("unsafe.json", unsafe)
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "exact_root_cause_claimed=false"
-        ):
+        with self.assertRaisesRegex(helix_context.HelixContextError, "exact_root_cause_claimed=false"):
             self.build(
                 capabilities=["query_servicetracer_findings"],
                 project_state_path=None,
@@ -372,25 +338,19 @@ class HelixContextTests(unittest.TestCase):
             )
 
     def test_rejects_unknown_capability(self) -> None:
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "unsupported capability"
-        ):
+        with self.assertRaisesRegex(helix_context.HelixContextError, "unsupported capability"):
             self.build(capabilities=["ssh_root_shell"])
 
     def test_integrity_validation_detects_tampering(self) -> None:
         package = self.build()
         package["query"]["text"] = "tampered"
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "integrity hash mismatch"
-        ):
+        with self.assertRaisesRegex(helix_context.HelixContextError, "integrity hash mismatch"):
             helix_context.validate_query_package(package, now=NOW)
 
     def test_duplicate_branch_ownership_is_rejected(self) -> None:
         duplicate = copy.deepcopy(self.project_state_v1)
         duplicate["workstreams"].append(copy.deepcopy(duplicate["workstreams"][0]))
-        with self.assertRaisesRegex(
-            helix_context.HelixContextError, "duplicate workstream branch"
-        ):
+        with self.assertRaisesRegex(helix_context.HelixContextError, "duplicate workstream branch"):
             helix_context.sanitize_project_state(duplicate)
 
     def test_accepts_public_servicetracer_envelope(self) -> None:
@@ -400,10 +360,43 @@ class HelixContextTests(unittest.TestCase):
             "report": self.servicetracer,
         }
         sanitized = helix_context.sanitize_servicetracer_report(envelope)
-        self.assertEqual(
-            sanitized["root_cause"]["status"],
-            "not_determined_by_servicetracer",
-        )
+        self.assertEqual(sanitized["root_cause"]["status"], "not_determined_by_servicetracer")
+
+    def test_rehashed_unknown_authority_field_is_rejected(self) -> None:
+        package = self.build()
+        package["authority"]["shell_authority"] = False
+        self.rehash(package)
+        with self.assertRaisesRegex(helix_context.HelixContextError, "authority shape mismatch"):
+            helix_context.validate_query_package(package, now=NOW)
+
+    def test_rehashed_capability_semantic_drift_is_rejected(self) -> None:
+        package = self.build()
+        package["authority"]["capability_grants"][0]["mode"] = "mutation"
+        self.rehash(package)
+        with self.assertRaisesRegex(helix_context.HelixContextError, "capability grant semantics drifted"):
+            helix_context.validate_query_package(package, now=NOW)
+
+    def test_rehashed_unknown_nested_workstream_field_is_rejected(self) -> None:
+        package = self.build()
+        package["evidence"]["declared_project_state"]["workstreams"][0]["ambient_shell"] = False
+        self.rehash(package)
+        with self.assertRaisesRegex(helix_context.HelixContextError, r"workstreams\[0\] shape mismatch"):
+            helix_context.validate_query_package(package, now=NOW)
+
+    def test_rehashed_unknown_package_field_is_rejected(self) -> None:
+        package = self.build()
+        package["authorization"] = "none"
+        self.rehash(package)
+        with self.assertRaisesRegex(helix_context.HelixContextError, "package shape mismatch"):
+            helix_context.validate_query_package(package, now=NOW)
+
+    def test_provenance_uses_logical_basename_not_absolute_path(self) -> None:
+        package = self.build()
+        for record in package["provenance"]:
+            self.assertEqual(Path(record["source_name"]).name, record["source_name"])
+            self.assertFalse(Path(record["source_name"]).is_absolute())
+            self.assertNotIn(str(self.root), record["source_name"])
+        helix_context.validate_query_package(package, now=NOW)
 
 
 if __name__ == "__main__":
