@@ -44,6 +44,7 @@ success_criteria:
 - CI syntax-checks all scripts and exercises install, verify, and rollback in an isolated temporary HOME
 - no script invokes HELIX query-package generation, external APIs, cloud commands, systemd, sudo, or credential flows
 - the HELIX workflow selects only a workstream that explicitly permits its own workflow path and exits successfully when unrelated project coordination does not claim it
+- both dedicated workflows explicitly check out and assert the pull request head SHA rather than GitHub's synthetic merge ref
 - both dedicated workflows pass on the same exact pull-request head
 - actual host installation remains a separate explicit human action after this pull request is reviewed
 
@@ -59,5 +60,6 @@ risks:
 - installing from an unreviewed branch could expose untrusted local code, so exact source commit evidence is required
 - user PATH configuration may not include HOME/.local/bin
 - project coordination files are shared by multiple dedicated workflows, so ownership assertions must select workstreams by declared scope instead of assuming array position
+- the default pull_request checkout is a synthetic merge ref, so exact-head evidence requires an explicit head-SHA checkout and assertion
 
 human_approval_required: true
