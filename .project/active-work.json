@@ -5,7 +5,7 @@
   "resolution_rules": {
     "current_default_branch_head": "Resolve from live GitHub metadata.",
     "pull_request_state": "Resolve from live GitHub metadata.",
-    "ci_and_reviews": "Resolve from exact-head GitHub workflow and review metadata.",
+    "ci_and_reviews": "Resolve from workflows that explicitly check out and assert the pull request head SHA; a synthetic merge ref is not exact-head evidence.",
     "deployment_state": "Resolve from evidence produced on the selected host; repository files alone do not prove active deployment.",
     "temporary_write_authority": "Valid only for the declared branch, open pull request, and permitted paths; expires when the pull request closes or merges."
   },
@@ -56,7 +56,7 @@
         "repository_writes": "Only the nine declared paths on deploy/contextos-local-readiness",
         "pull_request_creation": true,
         "pull_request_merge": false,
-        "workflow_scope": "Script syntax checks, authority-boundary assertions, isolated temporary-HOME install/verify/uninstall, complete repository tests, and selection-based isolation of the existing HELIX workflow ownership assertion",
+        "workflow_scope": "Explicit exact-head checkout assertion, script syntax checks, authority-boundary assertions, isolated temporary-HOME install/verify/uninstall, complete repository tests, and selection-based isolation of the existing HELIX workflow ownership assertion",
         "host_install_execution": false,
         "runtime_execution": false,
         "system_service_install": false,
@@ -67,6 +67,7 @@
         "external_repository_writes": false
       },
       "verification_criteria": [
+        "both dedicated workflows explicitly check out and assert github.event.pull_request.head.sha",
         "all deployment shell scripts pass bash syntax checks",
         "installer refuses unsupported Python and dirty source state by default",
         "isolated temporary-HOME installation produces an executable managed launcher and exact source-commit evidence",
@@ -78,7 +79,7 @@
         "both dedicated workflows pass on the same exact pull-request head",
         "the complete pull-request diff remains exactly the nine declared paths"
       ],
-      "next_gate": "Obtain exact-head CI for PR 15 from both dedicated workflows, inspect the complete nine-path diff, and perform a deployment-safety, workflow-isolation, and rollback review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
+      "next_gate": "Obtain exact-head CI for PR 15 from both dedicated workflows after the explicit head-SHA checkout correction, inspect the complete nine-path diff, and perform a deployment-safety, workflow-isolation, and rollback review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
       "authority_expiry_condition": "This repository write claim expires automatically when PR 15 closes or merges."
     }
   ],
