@@ -28,7 +28,7 @@ This does not create an always-on process, public endpoint, cloud workload, auto
 ## Sole write owner
 
 - Branch: `deploy/contextos-local-readiness`
-- Pull request: not yet assigned
+- Pull request: **#15**
 - Owner: this bounded ContextOS deployment conversation
 - Other conversations: review-only unless ownership is explicitly transferred
 
@@ -83,8 +83,8 @@ This increment may create repository files and a draft pull request only. It doe
 
 ## Next gate
 
-1. open a draft pull request from `deploy/contextos-local-readiness`;
-2. bind the pull-request number into repository-native ownership records;
-3. obtain and inspect exact-head GitHub Actions results;
+1. resolve PR #15's exact current head from live GitHub;
+2. obtain and inspect exact-head GitHub Actions results;
+3. confirm the final diff remains exactly the eight declared paths;
 4. perform a deployment-safety and rollback review against that exact head;
 5. after a separate merge decision, choose the actual Linux or WSL checkout and explicitly authorize running the installer there.
