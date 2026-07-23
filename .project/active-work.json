@@ -21,9 +21,9 @@
     {
       "workstream_id": "contextos-local-deployment-readiness",
       "branch": "deploy/contextos-local-readiness",
-      "pull_request": null,
+      "pull_request": 15,
       "write_owner": "ChatGPT ContextOS deployment conversation — bounded repository deployment-readiness authorized by Anthony Edgar with 'Proceed'",
-      "status": "implementation_in_progress",
+      "status": "ci_pending",
       "objective": "Provide an idempotent, evidence-producing, user-scoped installation and rollback path for the deterministic ContextOS CLI on Linux or WSL without deploying a daemon, enabling the HELIX bridge, using credentials, or mutating external systems.",
       "permitted_paths": [
         "deployment/README.md",
@@ -76,8 +76,8 @@
         "deployment scripts contain no sudo, systemctl, network download, cloud CLI, GitHub CLI, credential, or HELIX bridge invocation",
         "the complete pull-request diff remains exactly the eight declared paths"
       ],
-      "next_gate": "Open a draft pull request, obtain exact-head CI, inspect the complete eight-path diff, and perform a deployment-safety review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
-      "authority_expiry_condition": "This repository write claim expires automatically when the deployment-readiness pull request closes or merges."
+      "next_gate": "Obtain exact-head CI for PR 15, inspect the complete eight-path diff, and perform a deployment-safety and rollback review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
+      "authority_expiry_condition": "This repository write claim expires automatically when PR 15 closes or merges."
     }
   ],
   "known_open_pull_requests": [
