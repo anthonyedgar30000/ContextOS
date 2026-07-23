@@ -18,8 +18,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Check out exact pull request head
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact-head checkout
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -36,11 +43,20 @@ jobs:
           import json
           from pathlib import Path
 
-          state = json.loads(Path('.project/active-work.json').read_text())
-          workstream = state['workstreams'][0]
-          permitted = set(workstream['permitted_paths'])
-          assert '.github/workflows/helix-query-bridge-ci.yml' in permitted
+          workflow_path = '.github/workflows/helix-query-bridge-ci.yml'
+          state = json.loads(Path('.project/active-work.json').read_text(encoding='utf-8'))
+          claimed = [
+              workstream
+              for workstream in state.get('workstreams', [])
+              if workflow_path in set(workstream.get('permitted_paths', []))
+          ]
+          if not claimed:
+              print('No current workstream claims the HELIX workflow; unrelated coordination is not a HELIX ownership failure.')
+              raise SystemExit(0)
+          assert len(claimed) == 1, 'HELIX workflow must have exactly one declared workstream owner'
+          workstream = claimed[0]
           assert '.github/workflows/contextos-ci.yml' in workstream['protected_paths']
-          assert workstream['capability_boundary']['cloud_mutation'] is False
-          assert workstream['capability_boundary']['credential_use'] is False
+          boundary = workstream['capability_boundary']
+          assert boundary['cloud_mutation'] is False
+          assert boundary['credential_use'] is False
           PY

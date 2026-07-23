@@ -1,0 +1,65 @@
+task_id: CTX-0004
+project: ContextOS
+repo: ContextOS
+branch: deploy/contextos-local-readiness
+
+objective: Make the deterministic ContextOS CLI safely installable and removable as a user-scoped local command on a Linux or WSL host, with evidence-producing verification and no daemon, cloud, credential, or production authority, while preventing unrelated project-state updates from failing the dedicated HELIX bridge workflow.
+
+allowed_paths:
+- deployment/README.md
+- deployment/install-contextos.sh
+- deployment/verify-contextos.sh
+- deployment/uninstall-contextos.sh
+- .github/workflows/contextos-local-deployment-ci.yml
+- .github/workflows/helix-query-bridge-ci.yml
+- .contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml
+- .project/active-work.json
+- .project/handoffs/current-state.md
+
+protected_paths:
+- contextos.py
+- contextos
+- verify_cli.py
+- install_hooks.py
+- helix_context.py
+- tests/
+- docs/HELIX_QUERY_BRIDGE.md
+- .github/workflows/contextos-ci.yml
+- runtime/
+- cloud/
+- infra/
+- .env
+- '**/*credential*'
+- '**/*secret*'
+
+architecture_change_allowed: false
+
+success_criteria:
+- installation is user-scoped under HOME by default and never requires sudo
+- installer refuses an unsupported Python version and a dirty source checkout unless explicitly overridden
+- installer runs the complete repository unit suite unless explicitly skipped
+- installed launcher resolves the exact source checkout and records source commit, source path, launcher path, and installation time
+- verification proves launcher availability, state-file validity, source-commit binding, CLI help, and deterministic explain-git behavior
+- uninstallation removes only the managed launcher and deployment state
+- CI syntax-checks all scripts and exercises install, verify, and rollback in an isolated temporary HOME
+- no script invokes HELIX query-package generation, external APIs, cloud commands, systemd, sudo, or credential flows
+- the HELIX workflow selects only a workstream that explicitly permits its own workflow path and exits successfully when unrelated project coordination does not claim it
+- both dedicated workflows explicitly check out and assert the pull request head SHA rather than GitHub's synthetic merge ref
+- both dedicated workflows pass on the same exact pull-request head
+- actual host installation remains a separate explicit human action after this pull request is reviewed
+
+assumptions:
+- the first deployment target is a user-owned Linux or WSL host with Git and Python 3.11 or newer
+- ContextOS is a local CLI, not a continuously running service
+- active deployment means the command is installed on a chosen host and deliberately invoked against local repositories
+- the HELIX query bridge remains outside this deployment increment until cross-repository protocol compatibility is resolved
+
+risks:
+- an absolute source-checkout path becomes part of the generated local launcher and must remain valid
+- moving or deleting the source checkout breaks the launcher until reinstallation
+- installing from an unreviewed branch could expose untrusted local code, so exact source commit evidence is required
+- user PATH configuration may not include HOME/.local/bin
+- project coordination files are shared by multiple dedicated workflows, so ownership assertions must select workstreams by declared scope instead of assuming array position
+- the default pull_request checkout is a synthetic merge ref, so exact-head evidence requires an explicit head-SHA checkout and assertion
+
+human_approval_required: true

@@ -1,73 +1,86 @@
 {
   "schema_version": "project.active-work.v1",
-  "project": "ContextOS — HELIX Query Bridge Repair",
-  "updated_on": "2026-07-22",
+  "project": "ContextOS — Local Deployment Readiness",
+  "updated_on": "2026-07-23",
   "resolution_rules": {
     "current_default_branch_head": "Resolve from live GitHub metadata.",
     "pull_request_state": "Resolve from live GitHub metadata.",
-    "ci_and_reviews": "Resolve from exact-head GitHub workflow and review metadata.",
+    "ci_and_reviews": "Resolve from workflows that explicitly check out and assert the pull request head SHA; a synthetic merge ref is not exact-head evidence.",
+    "deployment_state": "Resolve from evidence produced on the selected host; repository files alone do not prove active deployment.",
     "temporary_write_authority": "Valid only for the declared branch, open pull request, and permitted paths; expires when the pull request closes or merges."
   },
   "trusted_baseline": {
     "branch": "main",
-    "commit": "d366bf0431716d0c87cd548a42db5810c76f0ccc",
+    "commit": "994b3ff8e6d4aaa47d2c9ed6c9eb09aaf27a423d",
     "last_completed_increment": {
-      "pull_request": 13,
-      "title": "Add bounded HELIX query bridge for ServiceTracer context"
+      "pull_request": 14,
+      "title": "Repair merged HELIX query bridge review findings"
     }
   },
   "workstreams": [
     {
-      "workstream_id": "helix-query-bridge-review-remediation",
-      "branch": "fix/helix-query-bridge-review-findings",
-      "pull_request": 14,
-      "write_owner": "ChatGPT Project Reality Synchronizer conversation — bounded ContextOS repair authorized by Anthony Edgar with 'Proceed'",
+      "workstream_id": "contextos-local-deployment-readiness",
+      "branch": "deploy/contextos-local-readiness",
+      "pull_request": 15,
+      "write_owner": "ChatGPT ContextOS deployment conversation — bounded repository deployment-readiness authorized by Anthony Edgar with 'Proceed'",
       "status": "ci_pending",
-      "objective": "Repair the merged PR 13 bridge findings through current-shape compatibility, recursive evidence bounds, honest completeness semantics, a dedicated non-conflicting CI workflow, and repository-native ownership records.",
+      "objective": "Provide an idempotent, evidence-producing, user-scoped installation and rollback path for the deterministic ContextOS CLI on Linux or WSL without deploying a daemon, enabling the HELIX bridge, using credentials, or mutating external systems; isolate the dedicated HELIX workflow from unrelated project-state ownership updates.",
       "permitted_paths": [
-        "helix_context.py",
-        "tests/test_helix_context.py",
-        "docs/HELIX_QUERY_BRIDGE.md",
-        ".contextos/contracts/CTX-0003-helix-query-bridge-repair.yaml",
+        "deployment/README.md",
+        "deployment/install-contextos.sh",
+        "deployment/verify-contextos.sh",
+        "deployment/uninstall-contextos.sh",
+        ".github/workflows/contextos-local-deployment-ci.yml",
         ".github/workflows/helix-query-bridge-ci.yml",
+        ".contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml",
         ".project/active-work.json",
         ".project/handoffs/current-state.md"
       ],
       "protected_paths": [
-        ".github/workflows/contextos-ci.yml",
         "contextos.py",
+        "contextos",
         "verify_cli.py",
         "install_hooks.py",
-        "gui/**",
-        ".contextos/policies/**",
-        ".contextos/audit/**",
-        "deployment/**",
+        "helix_context.py",
+        "tests/**",
+        "docs/HELIX_QUERY_BRIDGE.md",
+        ".github/workflows/contextos-ci.yml",
         "runtime/**",
+        "cloud/**",
+        "infra/**",
+        ".env",
         "**/*credential*",
         "**/*secret*"
       ],
       "capability_boundary": {
-        "repository_writes": "Only the seven declared paths on fix/helix-query-bridge-review-findings",
+        "repository_writes": "Only the nine declared paths on deploy/contextos-local-readiness",
         "pull_request_creation": true,
         "pull_request_merge": false,
-        "workflow_scope": "Local compile, tests, JSON parsing, and ownership-boundary assertion only",
-        "external_api_calls": false,
+        "workflow_scope": "Explicit exact-head checkout assertion, script syntax checks, authority-boundary assertions, isolated temporary-HOME install/verify/uninstall, complete repository tests, and selection-based isolation of the existing HELIX workflow ownership assertion",
+        "host_install_execution": false,
         "runtime_execution": false,
-        "cloud_mutation": false,
+        "system_service_install": false,
+        "helix_bridge_enablement": false,
+        "external_api_calls": false,
         "credential_use": false,
+        "cloud_mutation": false,
         "external_repository_writes": false
       },
       "verification_criteria": [
-        "project.active-work.v1 live HELIX shape fixture passes",
-        "project.active-work.v2 live ServiceTracer shape fixture passes",
-        "recursive nested secret, depth, size, and non-finite-number tests pass",
-        "requested capability versus supplied evidence completeness tests pass",
-        "all repository tests pass on the exact pull-request head",
-        "the exact diff remains limited to the seven declared paths",
-        "the dedicated workflow path does not overlap parked PR 9 contextos-ci.yml"
+        "both dedicated workflows explicitly check out and assert github.event.pull_request.head.sha",
+        "all deployment shell scripts pass bash syntax checks",
+        "installer refuses unsupported Python and dirty source state by default",
+        "isolated temporary-HOME installation produces an executable managed launcher and exact source-commit evidence",
+        "verification confirms state shape, launcher binding, clean exact source commit, CLI help, and READ_ONLY git-status explanation",
+        "rollback removes only the managed launcher and deployment evidence",
+        "the complete repository unit suite passes on the exact pull-request head",
+        "deployment scripts contain no sudo, systemctl, network download, cloud CLI, GitHub CLI, credential, or HELIX bridge invocation",
+        "the HELIX workflow no longer assumes workstreams[0] and does not fail unrelated coordination-only ownership changes",
+        "both dedicated workflows pass on the same exact pull-request head",
+        "the complete pull-request diff remains exactly the nine declared paths"
       ],
-      "next_gate": "Obtain exact-head CI for PR 14, inspect every job, confirm the final diff remains exactly seven paths, and record a read-only evidence/containment review. Keep merge as a separate explicit decision.",
-      "authority_expiry_condition": "This write claim expires automatically when the repair pull request closes or merges."
+      "next_gate": "Obtain exact-head CI for PR 15 from both dedicated workflows after the explicit head-SHA checkout correction, inspect the complete nine-path diff, and perform a deployment-safety, workflow-isolation, and rollback review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
+      "authority_expiry_condition": "This repository write claim expires automatically when PR 15 closes or merges."
     }
   ],
   "known_open_pull_requests": [
