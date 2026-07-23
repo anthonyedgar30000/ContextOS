@@ -18,8 +18,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Check out exact pull request head
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify exact-head checkout
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
