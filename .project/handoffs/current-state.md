@@ -59,9 +59,11 @@ Core ContextOS code, tests, the HELIX bridge implementation, its documentation a
 - Verification: exact commit and clean-tree binding, state-shape validation, CLI help, deterministic `READ_ONLY` explanation for `git status`, and complete unit suite.
 - Rollback: remove only the managed launcher and deployment evidence; preserve the source checkout and repository data.
 
-## Reality-synchronization finding during CI
+## Reality-synchronization findings during CI
 
-The first exact-head deployment workflow passed, but the existing `HELIX Query Bridge CI` failed on the same head even though no HELIX implementation file changed.
+### 1. Shared-workflow ownership assumption
+
+The first deployment workflow passed, but the existing `HELIX Query Bridge CI` failed on the same deployment-only head.
 
 Root cause:
 
@@ -76,7 +78,24 @@ Bounded remediation:
 - it exits successfully with an explicit message when unrelated coordination does not claim that workflow;
 - the deployment workflow selects its own workstream by `workstream_id` rather than array position.
 
-This changes workflow ownership resolution only. It does not enable, invoke, or alter `helix_context.py` package behavior.
+### 2. Synthetic merge checkout was not exact-head evidence
+
+Both workflows initially reported success against GitHub's default `pull/<number>/merge` checkout. The workflow run was associated with the PR head, but the executed files came from a synthetic merge commit.
+
+That means:
+
+```text
+workflow associated with head SHA != workflow executed on head SHA
+merge-ref success != exact-head success
+```
+
+Bounded remediation:
+
+- both workflows now set `actions/checkout` to `${{ github.event.pull_request.head.sha }}`;
+- both disable persisted checkout credentials;
+- both assert `git rev-parse HEAD` equals the event's exact head SHA before testing.
+
+These changes affect CI evidence semantics and workflow ownership isolation only. They do not enable, invoke, or alter `helix_context.py` package behavior.
 
 ## Authority boundary
 
@@ -93,20 +112,21 @@ This increment may create repository files and a draft pull request only. It doe
 
 ## Verification required
 
-1. syntax-check all three deployment scripts with `bash -n`;
-2. assert prohibited privileged, network, cloud, GitHub CLI, and HELIX bridge commands are absent;
-3. exercise default install, verification, and rollback under an isolated temporary `HOME`;
-4. run the complete ContextOS unit suite on the exact pull-request head;
-5. prove the HELIX workflow resolves ownership by declared workflow path rather than array position;
-6. obtain success from both dedicated workflows on the same exact head;
-7. confirm the complete pull-request diff remains exactly the nine declared paths;
-8. inspect the exact generated launcher and deployment evidence semantics;
-9. retain actual host installation as a separate explicit human gate.
+1. both workflows explicitly check out and assert the exact pull-request head SHA;
+2. syntax-check all three deployment scripts with `bash -n`;
+3. assert prohibited privileged, network, cloud, GitHub CLI, and HELIX bridge commands are absent;
+4. exercise default install, verification, and rollback under an isolated temporary `HOME`;
+5. run the complete ContextOS unit suite on the exact pull-request head;
+6. prove the HELIX workflow resolves ownership by declared workflow path rather than array position;
+7. obtain success from both dedicated workflows on the same exact head;
+8. confirm the complete pull-request diff remains exactly the nine declared paths;
+9. inspect the exact generated launcher and deployment evidence semantics;
+10. retain actual host installation as a separate explicit human gate.
 
 ## Next gate
 
 1. resolve PR #15's exact current head from live GitHub;
-2. obtain and inspect exact-head results for both dedicated workflows;
+2. obtain and inspect exact-head results for both dedicated workflows after the checkout correction;
 3. confirm the final diff remains exactly the nine declared paths;
-4. perform a deployment-safety, workflow-isolation, and rollback review against that exact head;
+4. perform a deployment-safety, workflow-isolation, exact-head-evidence, and rollback review against that exact head;
 5. after a separate merge decision, choose the actual Linux or WSL checkout and explicitly authorize running the installer there.
