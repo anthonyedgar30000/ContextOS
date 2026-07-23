@@ -3,7 +3,7 @@ project: ContextOS
 repo: ContextOS
 branch: deploy/contextos-local-readiness
 
-objective: Make the deterministic ContextOS CLI safely installable and removable as a user-scoped local command on a Linux or WSL host, with evidence-producing verification and no daemon, cloud, credential, or production authority.
+objective: Make the deterministic ContextOS CLI safely installable and removable as a user-scoped local command on a Linux or WSL host, with evidence-producing verification and no daemon, cloud, credential, or production authority, while preventing unrelated project-state updates from failing the dedicated HELIX bridge workflow.
 
 allowed_paths:
 - deployment/README.md
@@ -11,6 +11,7 @@ allowed_paths:
 - deployment/verify-contextos.sh
 - deployment/uninstall-contextos.sh
 - .github/workflows/contextos-local-deployment-ci.yml
+- .github/workflows/helix-query-bridge-ci.yml
 - .contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml
 - .project/active-work.json
 - .project/handoffs/current-state.md
@@ -24,7 +25,6 @@ protected_paths:
 - tests/
 - docs/HELIX_QUERY_BRIDGE.md
 - .github/workflows/contextos-ci.yml
-- .github/workflows/helix-query-bridge-ci.yml
 - runtime/
 - cloud/
 - infra/
@@ -43,6 +43,8 @@ success_criteria:
 - uninstallation removes only the managed launcher and deployment state
 - CI syntax-checks all scripts and exercises install, verify, and rollback in an isolated temporary HOME
 - no script invokes HELIX query-package generation, external APIs, cloud commands, systemd, sudo, or credential flows
+- the HELIX workflow selects only a workstream that explicitly permits its own workflow path and exits successfully when unrelated project coordination does not claim it
+- both dedicated workflows pass on the same exact pull-request head
 - actual host installation remains a separate explicit human action after this pull request is reviewed
 
 assumptions:
@@ -56,5 +58,6 @@ risks:
 - moving or deleting the source checkout breaks the launcher until reinstallation
 - installing from an unreviewed branch could expose untrusted local code, so exact source commit evidence is required
 - user PATH configuration may not include HOME/.local/bin
+- project coordination files are shared by multiple dedicated workflows, so ownership assertions must select workstreams by declared scope instead of assuming array position
 
 human_approval_required: true
