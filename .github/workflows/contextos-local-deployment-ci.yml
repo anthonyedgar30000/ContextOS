@@ -1,0 +1,82 @@
+name: ContextOS Local Deployment Readiness CI
+
+on:
+  pull_request:
+    paths:
+      - deployment/README.md
+      - deployment/install-contextos.sh
+      - deployment/verify-contextos.sh
+      - deployment/uninstall-contextos.sh
+      - .github/workflows/contextos-local-deployment-ci.yml
+      - .contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml
+      - .project/active-work.json
+      - .project/handoffs/current-state.md
+
+permissions:
+  contents: read
+
+jobs:
+  local-deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax-check deployment scripts
+        run: |
+          bash -n deployment/install-contextos.sh
+          bash -n deployment/verify-contextos.sh
+          bash -n deployment/uninstall-contextos.sh
+
+      - name: Enforce deployment authority boundary
+        run: |
+          if grep -nE '(^|[[:space:]])(sudo|systemctl|curl|wget|az|gh)([[:space:]]|$)' deployment/*.sh; then
+            echo "Deployment scripts contain a prohibited privileged, service, network, or cloud command." >&2
+            exit 1
+          fi
+          if grep -nF 'helix_context.py' deployment/*.sh; then
+            echo "Deployment scripts must not invoke the quarantined HELIX bridge." >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          state = json.loads(Path('.project/active-work.json').read_text(encoding='utf-8'))
+          workstream = state['workstreams'][0]
+          permitted = set(workstream['permitted_paths'])
+          assert workstream['branch'] == 'deploy/contextos-local-readiness'
+          assert '.github/workflows/contextos-local-deployment-ci.yml' in permitted
+          boundary = workstream['capability_boundary']
+          assert boundary['pull_request_merge'] is False
+          assert boundary['host_install_execution'] is False
+          assert boundary['runtime_execution'] is False
+          assert boundary['credential_use'] is False
+          assert boundary['external_api_calls'] is False
+          assert boundary['cloud_mutation'] is False
+          assert boundary['system_service_install'] is False
+          PY
+
+      - name: Exercise install, verify, and rollback in isolated HOME
+        run: |
+          export HOME="$RUNNER_TEMP/contextos-home"
+          export CONTEXTOS_BIN_DIR="$HOME/.local/bin"
+          export CONTEXTOS_STATE_DIR="$HOME/.local/share/contextos"
+          mkdir -p "$HOME"
+
+          bash deployment/install-contextos.sh
+          bash deployment/verify-contextos.sh
+          test -x "$CONTEXTOS_BIN_DIR/contextos"
+          test -f "$CONTEXTOS_STATE_DIR/deployment.json"
+
+          bash deployment/uninstall-contextos.sh
+          test ! -e "$CONTEXTOS_BIN_DIR/contextos"
+          test ! -e "$CONTEXTOS_STATE_DIR/deployment.json"
+
+      - name: Run complete repository unit suite independently
+        run: python -m unittest discover -s tests -v
