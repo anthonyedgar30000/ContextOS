@@ -1,0 +1,68 @@
+task_id: CTX-0005
+project: ContextOS
+repo: ContextOS
+branch: agent/contextos-project-on-hold
+
+objective: Mark ContextOS as an explicitly on-hold project, terminate stale deployment-readiness ownership, and instruct HELIX-governed reconciliation to skip routine, scheduled, and open-pull-request polling until a new bounded ContextOS objective is explicitly authorized.
+
+allowed_paths:
+- .contextos/contracts/CTX-0005-contextos-project-hold.yaml
+- .project/active-work.json
+- .project/handoffs/current-state.md
+- .github/workflows/contextos-local-deployment-ci.yml
+
+protected_paths:
+- contextos.py
+- contextos
+- verify_cli.py
+- install_hooks.py
+- helix_context.py
+- tests/
+- deployment/
+- docs/HELIX_QUERY_BRIDGE.md
+- .github/workflows/contextos-ci.yml
+- .github/workflows/helix-query-bridge-ci.yml
+- runtime/
+- cloud/
+- infra/
+- .env
+- '**/*credential*'
+- '**/*secret*'
+
+architecture_change_allowed: false
+
+success_criteria:
+- project_lifecycle.status is on_hold
+- project_lifecycle.reconciliation_policy skips routine, scheduled, and open-pull-request polling
+- explicit user request, targeted dependency impact, and security or integrity events remain valid bounded observation triggers
+- no active ContextOS workstreams remain declared
+- PR 15 is recorded as merged at b295f25e27d7887284ccdba17d5291c5ed090087
+- exact-head CI runs 29980727398 and 29980727421 remain recorded as successful
+- repository deployment readiness is distinguished from unobserved host installation and runtime health
+- parked open pull requests do not reactivate the project
+- the local deployment workflow accepts a no-owner state only when the project is explicitly on hold
+- no runtime, host, cloud, credential, external API, or external repository mutation occurs
+- the final pull-request diff remains exactly the four declared paths
+
+verification:
+- parse .project/active-work.json as JSON
+- parse this Intent Contract and the modified workflow as YAML
+- assert the on-hold lifecycle and reconciliation values deterministically
+- assert workstreams is an empty list
+- assert the workflow fail-closes unless an unclaimed deployment workflow is paired with the explicit on-hold state
+- obtain exact-head GitHub Actions results for the pull request
+
+human_approval_required: true
+
+authority_boundary:
+  repository_writes: only the four declared paths on agent/contextos-project-on-hold
+  pull_request_creation: true
+  pull_request_merge: false
+  deployment_execution: false
+  runtime_execution: false
+  credential_use: false
+  external_api_calls: false
+  cloud_mutation: false
+  external_repository_writes: false
+
+authority_expiry_condition: Temporary repository-write authority expires when the pull request closes or merges. The durable on-hold lifecycle remains until Anthony Edgar explicitly authorizes resumption.
