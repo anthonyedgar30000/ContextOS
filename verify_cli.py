@@ -12,6 +12,7 @@ import argparse
 import csv
 import fnmatch
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -58,6 +59,39 @@ class ProtectedPathViolation:
 class ContextFreshness:
     classification: str
     reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProjectInfo:
+    name: str
+    status: str
+
+
+@dataclass(frozen=True)
+class Milestone:
+    milestone_id: str
+    name: str
+    status: str
+
+
+@dataclass(frozen=True)
+class Feature:
+    name: str
+    milestone: str
+
+
+@dataclass(frozen=True)
+class ProjectPlan:
+    project: ProjectInfo
+    milestones: tuple[Milestone, ...]
+    features: tuple[Feature, ...]
+    locked_features: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProjectPlanResult:
+    passed: bool
+    violations: tuple[str, ...]
 
 
 GREEN = "\033[32m"
@@ -225,6 +259,295 @@ def load_policy(path: Path) -> Policy:
         return parse_policy_yaml(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise VerificationError(f"policy file not found: {path}") from error
+
+
+def parse_project_mapping_item(line: str, line_number: int) -> tuple[str, str]:
+    key, separator, value = line.partition(":")
+    if not separator:
+        raise VerificationError(
+            f"project_plan.yaml line {line_number}: expected '<key>: <value>'"
+        )
+    key = key.strip()
+    value = parse_yaml_scalar(value, line_number)
+    if not key:
+        raise VerificationError(
+            f"project_plan.yaml line {line_number}: mapping key cannot be empty"
+        )
+    return key, value
+
+
+def parse_project_plan_yaml(text: str) -> ProjectPlan:
+    project_fields: dict[str, str] = {}
+    milestones: list[Milestone] = []
+    features: list[Feature] = []
+    locked_features: list[str] = []
+
+    active_section: str | None = None
+    current_mapping: dict[str, str] | None = None
+
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        without_comment = strip_yaml_comment(raw_line).rstrip()
+        if not without_comment.strip():
+            continue
+
+        indent = len(without_comment) - len(without_comment.lstrip(" "))
+        line = without_comment.strip()
+
+        if indent == 0:
+            if current_mapping is not None:
+                append_project_plan_mapping(
+                    active_section,
+                    current_mapping,
+                    milestones,
+                    features,
+                    line_number,
+                )
+            active_section = None
+            current_mapping = None
+            key, separator, value = line.partition(":")
+            if separator and key in {
+                "project",
+                "milestones",
+                "features",
+                "locked_features",
+            }:
+                active_section = key
+                if value.strip():
+                    raise VerificationError(
+                        "project_plan.yaml top-level lists must use block syntax"
+                    )
+            else:
+                raise VerificationError(
+                    f"project_plan.yaml line {line_number}: unknown top-level key"
+                )
+            continue
+
+        if active_section == "project" and indent == 2:
+            key, value = parse_project_mapping_item(line, line_number)
+            project_fields[key] = value
+            continue
+
+        if active_section in {"milestones", "features"} and indent == 2:
+            if not line.startswith("- "):
+                raise VerificationError(
+                    f"project_plan.yaml line {line_number}: expected list item"
+                )
+            if current_mapping is not None:
+                append_project_plan_mapping(
+                    active_section,
+                    current_mapping,
+                    milestones,
+                    features,
+                    line_number,
+                )
+            current_mapping = {}
+            item = line[2:].strip()
+            if item:
+                key, value = parse_project_mapping_item(item, line_number)
+                current_mapping[key] = value
+            continue
+
+        if active_section in {"milestones", "features"} and indent == 4:
+            if current_mapping is None:
+                raise VerificationError(
+                    f"project_plan.yaml line {line_number}: unexpected mapping entry"
+                )
+            key, value = parse_project_mapping_item(line, line_number)
+            current_mapping[key] = value
+            continue
+
+        if active_section == "locked_features" and indent == 2:
+            if not line.startswith("- "):
+                raise VerificationError(
+                    f"project_plan.yaml line {line_number}: expected '- <feature>'"
+                )
+            locked_features.append(parse_yaml_scalar(line[2:], line_number))
+            continue
+
+        raise VerificationError(
+            f"project_plan.yaml line {line_number}: invalid indentation or syntax"
+        )
+
+    if current_mapping is not None:
+        append_project_plan_mapping(
+            active_section,
+            current_mapping,
+            milestones,
+            features,
+            len(text.splitlines()),
+        )
+
+    if "name" not in project_fields or "status" not in project_fields:
+        raise VerificationError("project_plan.yaml project must include name and status")
+    if not milestones:
+        raise VerificationError("project_plan.yaml milestones cannot be empty")
+    if not features:
+        raise VerificationError("project_plan.yaml features cannot be empty")
+    if not locked_features:
+        raise VerificationError("project_plan.yaml locked_features cannot be empty")
+
+    milestone_ids = {milestone.milestone_id for milestone in milestones}
+    for feature in features:
+        if feature.milestone not in milestone_ids:
+            raise VerificationError(
+                "project_plan.yaml feature "
+                f"{feature.name} references unknown milestone {feature.milestone}"
+            )
+
+    return ProjectPlan(
+        project=ProjectInfo(
+            name=project_fields["name"],
+            status=project_fields["status"],
+        ),
+        milestones=tuple(milestones),
+        features=tuple(features),
+        locked_features=tuple(dict.fromkeys(locked_features)),
+    )
+
+
+def append_project_plan_mapping(
+    active_section: str | None,
+    mapping: dict[str, str],
+    milestones: list[Milestone],
+    features: list[Feature],
+    line_number: int,
+) -> None:
+    if active_section == "milestones":
+        milestones.append(milestone_from_mapping(mapping, line_number))
+    elif active_section == "features":
+        features.append(feature_from_mapping(mapping, line_number))
+
+
+def milestone_from_mapping(mapping: dict[str, str], line_number: int) -> Milestone:
+    required = {"id", "name", "status"}
+    missing = sorted(required - mapping.keys())
+    if missing:
+        raise VerificationError(
+            f"project_plan.yaml line {line_number}: milestone missing {', '.join(missing)}"
+        )
+    return Milestone(
+        milestone_id=mapping["id"],
+        name=mapping["name"],
+        status=mapping["status"],
+    )
+
+
+def feature_from_mapping(mapping: dict[str, str], line_number: int) -> Feature:
+    required = {"name", "milestone"}
+    missing = sorted(required - mapping.keys())
+    if missing:
+        raise VerificationError(
+            f"project_plan.yaml line {line_number}: feature missing {', '.join(missing)}"
+        )
+    return Feature(name=mapping["name"], milestone=mapping["milestone"])
+
+
+def load_project_plan(path: Path) -> ProjectPlan:
+    try:
+        return parse_project_plan_yaml(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise VerificationError(f"project plan file not found: {path}") from error
+
+
+def should_scan_change_content(path: str) -> bool:
+    if path in {"project_plan.yaml", "verify_cli.py", "contextos.py"}:
+        return False
+    if path.startswith("tests/"):
+        return False
+    return True
+
+
+def git_change_text(repo: Path, changed_paths: Sequence[str]) -> str:
+    chunks: list[str] = []
+    for path in dict.fromkeys(changed_paths):
+        if not should_scan_change_content(path):
+            continue
+        for diff_args in (["diff", "--", path], ["diff", "--cached", "--", path]):
+            chunk = try_run_git(diff_args, repo)
+            if chunk:
+                chunks.append(chunk)
+    return "\n".join(chunks)
+
+
+def locked_feature_search_terms(feature: str) -> tuple[str, ...]:
+    normalized = feature.lower()
+    return tuple(
+        dict.fromkeys(
+            [
+                normalized,
+                normalized.replace("_", "-"),
+                normalized.replace("_", " "),
+            ]
+        )
+    )
+
+
+def path_references_locked_feature(path: str, feature: str) -> bool:
+    normalized_path = path.lower().replace("-", "_")
+    for term in locked_feature_search_terms(feature):
+        if term.replace(" ", "_") in normalized_path:
+            return True
+    if feature == "production_deployment" and (
+        normalized_path.startswith("deploy/")
+        or normalized_path == "deploy"
+    ):
+        return True
+    return False
+
+
+def text_references_locked_feature(text: str, feature: str) -> bool:
+    normalized_text = text.lower()
+    for term in locked_feature_search_terms(feature):
+        if term in normalized_text:
+            return True
+    if feature == "production_deployment" and "deploy/" in normalized_text:
+        return True
+    return False
+
+
+def locked_feature_violation_reason(feature: str, source: str) -> str:
+    return f"locked feature reference: {feature} ({source})"
+
+
+def validate_project_plan(
+    repo_root: Path,
+    changed_paths: Sequence[str],
+    change_text: str,
+    plan_path: Path | None = None,
+) -> ProjectPlanResult:
+    if plan_path is None:
+        plan_path = repo_root / "project_plan.yaml"
+
+    violations: list[str] = []
+    try:
+        project_plan = load_project_plan(plan_path)
+    except VerificationError as error:
+        return ProjectPlanResult(passed=False, violations=(str(error),))
+
+    for feature in project_plan.locked_features:
+        for path in changed_paths:
+            if path_references_locked_feature(path, feature):
+                violations.append(
+                    locked_feature_violation_reason(feature, f"path {path}")
+                )
+        if text_references_locked_feature(change_text, feature):
+            violations.append(
+                locked_feature_violation_reason(feature, "change content")
+            )
+
+    return ProjectPlanResult(
+        passed=not violations,
+        violations=tuple(dict.fromkeys(violations)),
+    )
+
+
+def print_project_plan_result(result: ProjectPlanResult) -> None:
+    print()
+    if result.passed:
+        print(f"PROJECT PLAN {colorize('PASSED', GREEN)}")
+    else:
+        print(f"PROJECT PLAN {colorize('FAILED', RED)}")
+        print_section("project plan violations:", list(result.violations))
 
 
 def parse_session_context_json(data: object) -> SessionContext:
@@ -472,6 +795,10 @@ def unauthorized_file_reason(path: str) -> str:
     return f"unauthorized file: {path} (not under allowed_paths)"
 
 
+def is_github_actions() -> bool:
+    return os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+
+
 def context_freshness(
     *,
     session_context: SessionContext | None,
@@ -481,24 +808,32 @@ def context_freshness(
 ) -> ContextFreshness:
     reasons = []
     is_detached = actual_branch == "(detached HEAD)"
-    if session_context is not None:
-        if session_context.branch != actual_branch:
-            reasons.append(f"session created on {session_context.branch}")
-            reasons.append(f"current branch is {actual_branch}")
-        if session_context.git_head_hash != actual_head_hash:
-            reasons.append("HEAD changed after ingestion")
+    ci_allows_detached = is_github_actions() and is_detached
+    branch_mismatch = (
+        session_context is not None and session_context.branch != actual_branch
+    )
+    head_mismatch = (
+        session_context is not None
+        and session_context.git_head_hash != actual_head_hash
+    )
+
+    if branch_mismatch:
+        reasons.append(f"session created on {session_context.branch}")
+        reasons.append(f"current branch is {actual_branch}")
+    if head_mismatch:
+        reasons.append("HEAD changed after ingestion")
 
     if is_detached:
-        reasons.append("current repository is in detached HEAD state")
+        if ci_allows_detached:
+            reasons.append("detached HEAD allowed in CI")
+        else:
+            reasons.append("current repository is in detached HEAD state")
     if behind_reason is not None:
         reasons.append(behind_reason)
 
-    if is_detached:
+    if is_detached and not ci_allows_detached:
         classification = "DIVERGED"
-    elif session_context is not None and (
-        session_context.branch != actual_branch
-        or session_context.git_head_hash != actual_head_hash
-    ):
+    elif head_mismatch or (branch_mismatch and not ci_allows_detached):
         classification = "STALE"
     elif behind_reason is not None:
         classification = "AGING"
@@ -679,6 +1014,12 @@ def verify(
         policy.protected_paths,
     )
     rendered_protected_violations = render_protected_violations(protected_violations)
+    change_text = git_change_text(actual_repo_root, sorted_changed_paths)
+    project_plan_result = validate_project_plan(
+        actual_repo_root,
+        sorted_changed_paths,
+        change_text,
+    )
 
     disallowed_paths = sorted(
         path for path in changed_paths if not is_allowed(path, policy.allowed_paths)
@@ -753,7 +1094,12 @@ def verify(
         print(f"audit report: {report_path}")
 
     print_context_freshness(freshness)
+    print_project_plan_result(project_plan_result)
+
     if freshness.classification != "FRESH":
+        return 1
+
+    if not project_plan_result.passed:
         return 1
 
     if mismatch_reasons:

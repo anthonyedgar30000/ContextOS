@@ -1,0 +1,35 @@
+project:
+  name: ContextOS
+  status: prototype
+
+milestones:
+  - id: GOV-001
+    name: Governance Engine
+    status: complete
+
+  - id: GOV-002
+    name: CI Verification
+    status: complete
+
+  - id: GOV-003
+    name: Project Plan Enforcement
+    status: active
+
+  - id: GOV-004
+    name: Production Deployment
+    status: locked
+
+features:
+  - name: verification
+    milestone: GOV-001
+
+  - name: github_actions
+    milestone: GOV-002
+
+  - name: project_plan
+    milestone: GOV-003
+
+locked_features:
+  - production_deployment
+  - auto_merge
+  - self_modifying_rules

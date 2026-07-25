@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import verify_cli
 
@@ -70,9 +71,14 @@ def git_commit_all(repo: Path, message: str) -> None:
     )
 
 
+def write_default_project_plan(repo: Path) -> None:
+    shutil.copy2(REPO_ROOT / "project_plan.yaml", repo / "project_plan.yaml")
+
+
 def prepare_hook_repo(repo: Path) -> None:
     git_init(repo)
     configure_git_identity(repo)
+    write_default_project_plan(repo)
     (repo / ".githooks").mkdir()
     shutil.copy2(REPO_ROOT / "verify_cli.py", repo / "verify_cli.py")
     shutil.copy2(
@@ -111,6 +117,64 @@ metadata:
     def test_rejects_empty_allowed_paths(self) -> None:
         with self.assertRaisesRegex(verify_cli.VerificationError, "cannot be empty"):
             verify_cli.parse_policy_yaml("allowed_paths: []\n")
+
+
+class ProjectPlanParsingTests(unittest.TestCase):
+    def test_parses_repository_project_plan(self) -> None:
+        plan = verify_cli.parse_project_plan_yaml(
+            (REPO_ROOT / "project_plan.yaml").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(plan.project.name, "ContextOS")
+        self.assertEqual(plan.project.status, "prototype")
+        self.assertEqual(len(plan.milestones), 4)
+        self.assertEqual(len(plan.features), 3)
+        self.assertEqual(
+            plan.locked_features,
+            (
+                "production_deployment",
+                "auto_merge",
+                "self_modifying_rules",
+            ),
+        )
+
+    def test_detects_locked_feature_in_path(self) -> None:
+        self.assertTrue(
+            verify_cli.path_references_locked_feature(
+                "deploy/production.yml",
+                "production_deployment",
+            )
+        )
+        self.assertTrue(
+            verify_cli.text_references_locked_feature(
+                "enable auto_merge on main",
+                "auto_merge",
+            )
+        )
+
+    def test_validate_project_plan_fails_when_file_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            result = verify_cli.validate_project_plan(repo, [], "")
+            self.assertFalse(result.passed)
+            self.assertIn("project plan file not found", result.violations[0])
+
+    def test_validate_project_plan_fails_for_locked_feature_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            write_default_project_plan(repo)
+            result = verify_cli.validate_project_plan(
+                repo,
+                ["deploy/production.yml"],
+                "",
+            )
+            self.assertFalse(result.passed)
+            self.assertTrue(
+                any(
+                    "production_deployment" in violation
+                    for violation in result.violations
+                )
+            )
 
 
 class PathMatchingTests(unittest.TestCase):
@@ -181,9 +245,11 @@ class PreCommitHookTests(unittest.TestCase):
                 "  - allowed.txt\n"
                 "  - policy.yaml\n"
                 "  - session.json\n"
+                "  - project_plan.yaml\n"
                 "  - verify_cli.py\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
             (repo / "allowed.txt").write_text("allowed\n", encoding="utf-8")
 
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
@@ -212,9 +278,11 @@ class PreCommitHookTests(unittest.TestCase):
                 "  - allowed.txt\n"
                 "  - policy.yaml\n"
                 "  - session.json\n"
+                "  - project_plan.yaml\n"
                 "  - verify_cli.py\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
             (repo / "allowed.txt").write_text("allowed\n", encoding="utf-8")
             (repo / "blocked.txt").write_text("blocked\n", encoding="utf-8")
 
@@ -250,10 +318,12 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                 "  - .env\n"
                 "  - policy.yaml\n"
                 "  - session.json\n"
+                "  - project_plan.yaml\n"
                 "protected_paths:\n"
                 "  - .env\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
             (repo / ".env").write_text("TOKEN=test\n", encoding="utf-8")
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
             report_path = repo / "audit.md"
@@ -283,6 +353,10 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             self.assertIn("protected mode: advisory", output)
             self.assertIn("protected path violation: .env matches .env", output)
             self.assertIn(
+                f"PROJECT PLAN {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
+            self.assertIn(
                 f"verification: {verify_cli.GREEN}PASSED{verify_cli.RESET}",
                 output,
             )
@@ -290,6 +364,50 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             report = report_path.read_text(encoding="utf-8")
             self.assertIn("## Protected Path Violations", report)
             self.assertIn("- protected path violation: .env matches .env", report)
+
+    def test_fails_when_change_references_locked_feature(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            configure_git_identity(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - deploy/production.yml\n"
+                "  - policy.yaml\n"
+                "  - session.json\n"
+                "  - project_plan.yaml\n",
+                encoding="utf-8",
+            )
+            write_default_project_plan(repo)
+            (repo / "deploy").mkdir()
+            (repo / "deploy" / "production.yml").write_text(
+                "replicas: 3\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn(
+                f"PROJECT PLAN {verify_cli.RED}FAILED{verify_cli.RESET}",
+                output,
+            )
+            self.assertIn("production_deployment", output)
 
     def test_blocks_protected_staged_paths_in_enforce_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -299,15 +417,20 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             (repo / "session.json").write_text("{}\n", encoding="utf-8")
             (repo / "policy.yaml").write_text(
                 "allowed_paths:\n"
-                "  - deploy/app.yml\n"
+                "  - .github/workflows/build.yml\n"
                 "  - policy.yaml\n"
                 "  - session.json\n"
+                "  - project_plan.yaml\n"
                 "protected_paths:\n"
-                "  - deploy/**\n",
+                "  - .github/workflows/**\n",
                 encoding="utf-8",
             )
-            (repo / "deploy").mkdir()
-            (repo / "deploy" / "app.yml").write_text("image: app\n", encoding="utf-8")
+            write_default_project_plan(repo)
+            (repo / ".github" / "workflows").mkdir(parents=True)
+            (repo / ".github" / "workflows" / "build.yml").write_text(
+                "name: build\n",
+                encoding="utf-8",
+            )
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
 
             stdout = io.StringIO()
@@ -328,12 +451,17 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             output = stdout.getvalue()
             self.assertIn(
+                f"PROJECT PLAN {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
+            self.assertIn(
                 f"protected paths: {verify_cli.RED}FAILED{verify_cli.RESET}",
                 output,
             )
             self.assertIn("protected mode: enforce", output)
             self.assertIn(
-                "protected path violation: deploy/app.yml matches deploy/**",
+                "protected path violation: .github/workflows/build.yml "
+                "matches .github/workflows/**",
                 output,
             )
             self.assertIn(
@@ -355,9 +483,11 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                 "allowed_paths:\n"
                 "  - .contextos/session_context.json\n"
                 "  - policy.yaml\n"
-                "  - session.json\n",
+                "  - session.json\n"
+                "  - project_plan.yaml\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
             (repo / ".contextos").mkdir()
             (repo / ".contextos" / "session_context.json").write_text(
                 json.dumps(
@@ -450,9 +580,11 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                 "allowed_paths:\n"
                 "  - .contextos/session_context.json\n"
                 "  - policy.yaml\n"
-                "  - session.json\n",
+                "  - session.json\n"
+                "  - project_plan.yaml\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
             (repo / ".contextos").mkdir()
             (repo / ".contextos" / "session_context.json").write_text(
                 json.dumps(
@@ -509,9 +641,11 @@ class VerifyCliIntegrationTests(unittest.TestCase):
                 "allowed_paths:\n"
                 "  - .contextos/session_context.json\n"
                 "  - policy.yaml\n"
-                "  - session.json\n",
+                "  - session.json\n"
+                "  - project_plan.yaml\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
             (repo / ".contextos").mkdir()
             (repo / ".contextos" / "session_context.json").write_text(
                 json.dumps(
@@ -545,6 +679,59 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             self.assertIn("- current branch is (detached HEAD)", output)
             self.assertIn("- current repository is in detached HEAD state", output)
 
+    def test_passes_when_detached_head_in_github_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            configure_git_identity(repo)
+            (repo / "README.md").write_text("# Repo\n", encoding="utf-8")
+            git_commit_all(repo, "initial commit")
+            head_hash = git_head_hash(repo)
+
+            (repo / "session.json").write_text("{}\n", encoding="utf-8")
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - policy.yaml\n"
+                "  - session.json\n"
+                "  - project_plan.yaml\n",
+                encoding="utf-8",
+            )
+            write_default_project_plan(repo)
+            git_commit_all(repo, "add governance files")
+            head_hash = git_head_hash(repo)
+            subprocess.run(
+                ["git", "checkout", "--detach", head_hash],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                    exit_code = verify_cli.main(
+                        [
+                            "--session",
+                            str(repo / "session.json"),
+                            "--policy",
+                            str(repo / "policy.yaml"),
+                            "--repo",
+                            str(repo),
+                            "--session-context",
+                            str(repo / ".contextos" / "missing_session_context.json"),
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("CONTEXT FRESH", output)
+            self.assertIn("- detached HEAD allowed in CI", output)
+            self.assertNotIn("CONTEXT DIVERGED", output)
+            self.assertNotIn(
+                "- current repository is in detached HEAD state", output
+            )
+
     def test_fails_when_status_contains_disallowed_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
@@ -559,10 +746,12 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             (repo / "policy.yaml").write_text(
                 "allowed_paths:\n"
                 "  - session.json\n"
+                "  - project_plan.yaml\n"
                 "  - policy.yaml\n"
                 "  - src\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
             (repo / "src").mkdir()
             (repo / "src" / "allowed.txt").write_text("allowed\n", encoding="utf-8")
             (repo / "secret.txt").write_text("blocked\n", encoding="utf-8")
@@ -632,9 +821,11 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             (repo / "policy.yaml").write_text(
                 "allowed_paths:\n"
                 "  - session.json\n"
+                "  - project_plan.yaml\n"
                 "  - policy.yaml\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
 
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
@@ -676,9 +867,11 @@ class VerifyCliIntegrationTests(unittest.TestCase):
             (repo / "policy.yaml").write_text(
                 "allowed_paths:\n"
                 "  - session.json\n"
+                "  - project_plan.yaml\n"
                 "  - policy.yaml\n",
                 encoding="utf-8",
             )
+            write_default_project_plan(repo)
 
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
@@ -695,6 +888,10 @@ class VerifyCliIntegrationTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
+            self.assertIn(
+                f"PROJECT PLAN {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
             self.assertIn(f"expected: {actual_branch}", output)
             self.assertIn(f"actual: {actual_branch}", output)
             self.assertIn("CONTEXT FRESH", output)

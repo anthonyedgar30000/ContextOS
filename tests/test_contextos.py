@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -232,8 +233,13 @@ class ContextosVerifyTests(unittest.TestCase):
             (repo / "policy.yaml").write_text(
                 "allowed_paths:\n"
                 "  - policy.yaml\n"
-                "  - session.json\n",
+                "  - session.json\n"
+                "  - project_plan.yaml\n",
                 encoding="utf-8",
+            )
+            shutil.copy2(
+                Path(__file__).resolve().parents[1] / "project_plan.yaml",
+                repo / "project_plan.yaml",
             )
 
             stdout = io.StringIO()

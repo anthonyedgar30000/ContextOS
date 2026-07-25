@@ -40,12 +40,14 @@ def prepare_contextos_repo(repo: Path, protected_mode: str = "enforce") -> None:
     git_init(repo)
     configure_git_identity(repo)
     shutil.copy2(REPO_ROOT / "verify_cli.py", repo / "verify_cli.py")
+    shutil.copy2(REPO_ROOT / "project_plan.yaml", repo / "project_plan.yaml")
     (repo / "session.json").write_text("{}\n", encoding="utf-8")
     (repo / "policy.yaml").write_text(
         "allowed_paths:\n"
         "  - deploy/production.yml\n"
         "  - policy.yaml\n"
         "  - session.json\n"
+        "  - project_plan.yaml\n"
         "  - verify_cli.py\n"
         "protected_paths:\n"
         "  - deploy/**\n",
@@ -106,11 +108,18 @@ class InstallHooksTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
             prepare_contextos_repo(repo, "advisory")
-            (repo / "deploy").mkdir()
-            (repo / "deploy" / "production.yml").write_text(
-                "replicas: 4\n",
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - .env\n"
+                "  - policy.yaml\n"
+                "  - session.json\n"
+                "  - project_plan.yaml\n"
+                "  - verify_cli.py\n"
+                "protected_paths:\n"
+                "  - .env\n",
                 encoding="utf-8",
             )
+            (repo / ".env").write_text("TOKEN=test\n", encoding="utf-8")
 
             subprocess.run(["git", "add", "."], cwd=repo, check=True)
             commit = subprocess.run(
@@ -125,6 +134,8 @@ class InstallHooksTests(unittest.TestCase):
             output = commit.stdout + commit.stderr
             self.assertEqual(commit.returncode, 0, output)
             self.assertIn("protected mode: advisory", output)
+            self.assertIn("PROJECT PLAN", output)
+            self.assertIn("PASSED", output)
             self.assertIn("ContextOS pre-commit: verification passed", output)
 
 
