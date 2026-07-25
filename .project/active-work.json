@@ -1,100 +1,104 @@
 {
   "schema_version": "project.active-work.v1",
-  "project": "ContextOS — Local Deployment Readiness",
-  "updated_on": "2026-07-23",
+  "project": "ContextOS",
+  "updated_on": "2026-07-25",
+  "project_lifecycle": {
+    "status": "on_hold",
+    "effective_on": "2026-07-25",
+    "authority": "Anthony Edgar",
+    "reason": "No active ContextOS increment is currently authorized. Routine reconciliation was consuming HELIX governed-agent cycles without an active decision, implementation, deployment, or dependency gate.",
+    "reconciliation_policy": {
+      "routine": "skip",
+      "scheduled": "skip",
+      "open_pull_request_polling": "skip",
+      "dependency_impact": "targeted_only",
+      "explicit_user_request": "allow",
+      "security_or_integrity_event": "allow_targeted_observation",
+      "repository_mutation": "requires_new_explicit_authorization"
+    },
+    "resume_gate": "Resume only after Anthony Edgar explicitly authorizes a new bounded ContextOS objective with a fresh branch, declared file scope, verification criteria, and pull request.",
+    "open_pull_requests_do_not_wake_project": true
+  },
   "resolution_rules": {
-    "current_default_branch_head": "Resolve from live GitHub metadata.",
-    "pull_request_state": "Resolve from live GitHub metadata.",
-    "ci_and_reviews": "Resolve from workflows that explicitly check out and assert the pull request head SHA; a synthetic merge ref is not exact-head evidence.",
-    "deployment_state": "Resolve from evidence produced on the selected host; repository files alone do not prove active deployment.",
-    "temporary_write_authority": "Valid only for the declared branch, open pull request, and permitted paths; expires when the pull request closes or merges."
+    "current_default_branch_head": "Resolve from live GitHub metadata only when an allowed targeted observation is triggered.",
+    "pull_request_state": "Open or changing pull requests do not reactivate an on-hold project. Resolve them only during an explicit ContextOS review or approved dependency-impact check.",
+    "ci_and_reviews": "Use exact-head GitHub workflow and review metadata for the relevant commit. A synthetic merge ref is not exact-head evidence.",
+    "deployment_state": "Resolve from evidence produced on a selected host. Repository readiness does not prove installation, runtime health, or operational use.",
+    "temporary_write_authority": "No ContextOS repository write authority is active while the project is on hold. A new grant must be explicit, branch-bound, scope-bound, and non-inheriting.",
+    "reconciliation_eligibility": "Skip routine, scheduled, and open-pull-request reconciliation while project_lifecycle.status is on_hold."
   },
   "trusted_baseline": {
     "branch": "main",
-    "commit": "994b3ff8e6d4aaa47d2c9ed6c9eb09aaf27a423d",
+    "commit": "b295f25e27d7887284ccdba17d5291c5ed090087",
     "last_completed_increment": {
-      "pull_request": 14,
-      "title": "Repair merged HELIX query bridge review findings"
+      "pull_request": 15,
+      "title": "Add bounded local ContextOS deployment readiness",
+      "exact_reviewed_head": "0dcc7d17c36dbd7be1aaa7f4402aee1a8cdf0f37",
+      "merge_commit": "b295f25e27d7887284ccdba17d5291c5ed090087",
+      "exact_head_ci": [
+        {
+          "workflow": "HELIX Query Bridge CI",
+          "run_id": 29980727398,
+          "run_number": 20,
+          "conclusion": "success"
+        },
+        {
+          "workflow": "ContextOS Local Deployment Readiness CI",
+          "run_id": 29980727421,
+          "run_number": 13,
+          "conclusion": "success"
+        }
+      ]
     }
   },
-  "workstreams": [
+  "deployment_state": {
+    "repository_deployment_readiness": "implemented_and_exact_head_ci_verified",
+    "host_installation": "not_observed",
+    "runtime_health": "not_observed",
+    "helix_query_bridge_operational_trust": "withheld_due_to_unresolved_protocol_compatibility"
+  },
+  "workstreams": [],
+  "parked_pull_requests": [
     {
-      "workstream_id": "contextos-local-deployment-readiness",
-      "branch": "deploy/contextos-local-readiness",
-      "pull_request": 15,
-      "write_owner": "ChatGPT ContextOS deployment conversation — bounded repository deployment-readiness authorized by Anthony Edgar with 'Proceed'",
-      "status": "ci_pending",
-      "objective": "Provide an idempotent, evidence-producing, user-scoped installation and rollback path for the deterministic ContextOS CLI on Linux or WSL without deploying a daemon, enabling the HELIX bridge, using credentials, or mutating external systems; isolate the dedicated HELIX workflow from unrelated project-state ownership updates.",
-      "permitted_paths": [
-        "deployment/README.md",
-        "deployment/install-contextos.sh",
-        "deployment/verify-contextos.sh",
-        "deployment/uninstall-contextos.sh",
-        ".github/workflows/contextos-local-deployment-ci.yml",
-        ".github/workflows/helix-query-bridge-ci.yml",
-        ".contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml",
-        ".project/active-work.json",
-        ".project/handoffs/current-state.md"
-      ],
-      "protected_paths": [
-        "contextos.py",
-        "contextos",
-        "verify_cli.py",
-        "install_hooks.py",
-        "helix_context.py",
-        "tests/**",
-        "docs/HELIX_QUERY_BRIDGE.md",
-        ".github/workflows/contextos-ci.yml",
-        "runtime/**",
-        "cloud/**",
-        "infra/**",
-        ".env",
-        "**/*credential*",
-        "**/*secret*"
-      ],
-      "capability_boundary": {
-        "repository_writes": "Only the nine declared paths on deploy/contextos-local-readiness",
-        "pull_request_creation": true,
-        "pull_request_merge": false,
-        "workflow_scope": "Explicit exact-head checkout assertion, script syntax checks, authority-boundary assertions, isolated temporary-HOME install/verify/uninstall, complete repository tests, and selection-based isolation of the existing HELIX workflow ownership assertion",
-        "host_install_execution": false,
-        "runtime_execution": false,
-        "system_service_install": false,
-        "helix_bridge_enablement": false,
-        "external_api_calls": false,
-        "credential_use": false,
-        "cloud_mutation": false,
-        "external_repository_writes": false
-      },
-      "verification_criteria": [
-        "both dedicated workflows explicitly check out and assert github.event.pull_request.head.sha",
-        "all deployment shell scripts pass bash syntax checks",
-        "installer refuses unsupported Python and dirty source state by default",
-        "isolated temporary-HOME installation produces an executable managed launcher and exact source-commit evidence",
-        "verification confirms state shape, launcher binding, clean exact source commit, CLI help, and READ_ONLY git-status explanation",
-        "rollback removes only the managed launcher and deployment evidence",
-        "the complete repository unit suite passes on the exact pull-request head",
-        "deployment scripts contain no sudo, systemctl, network download, cloud CLI, GitHub CLI, credential, or HELIX bridge invocation",
-        "the HELIX workflow no longer assumes workstreams[0] and does not fail unrelated coordination-only ownership changes",
-        "both dedicated workflows pass on the same exact pull-request head",
-        "the complete pull-request diff remains exactly the nine declared paths"
-      ],
-      "next_gate": "Obtain exact-head CI for PR 15 from both dedicated workflows after the explicit head-SHA checkout correction, inspect the complete nine-path diff, and perform a deployment-safety, workflow-isolation, and rollback review. Actual installation on Anthony's selected Linux or WSL host remains a separate explicit action.",
-      "authority_expiry_condition": "This repository write claim expires automatically when PR 15 closes or merges."
-    }
-  ],
-  "known_open_pull_requests": [
+      "pull_request": 1,
+      "status": "parked_historical",
+      "wake_project": false
+    },
+    {
+      "pull_request": 4,
+      "status": "parked_legacy_coordination",
+      "wake_project": false
+    },
+    {
+      "pull_request": 6,
+      "status": "parked_legacy_scope",
+      "wake_project": false
+    },
+    {
+      "pull_request": 7,
+      "status": "parked_legacy_scope",
+      "wake_project": false
+    },
+    {
+      "pull_request": 8,
+      "status": "parked_legacy_scope",
+      "wake_project": false
+    },
     {
       "pull_request": 9,
-      "title": "Add minimal ContextOS CI workflow and governance documentation",
-      "status": "parked_draft_historical_overlap",
-      "action": "Do not modify or claim .github/workflows/contextos-ci.yml in this workstream."
+      "status": "parked_historical_overlap",
+      "wake_project": false
+    },
+    {
+      "pull_request": 10,
+      "status": "parked_legacy_scope",
+      "wake_project": false
     },
     {
       "pull_request": 12,
-      "title": "Add Tauri React desktop GUI",
-      "status": "parked_draft_unrelated_scope",
-      "action": "Review-only; no overlapping permitted paths."
+      "status": "parked_unrelated_gui_scope",
+      "wake_project": false
     }
-  ]
+  ],
+  "next_gate": "No action. Wait for an explicit ContextOS resume decision or an allowed targeted dependency or security observation."
 }
