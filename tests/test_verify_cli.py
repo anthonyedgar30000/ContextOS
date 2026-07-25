@@ -113,6 +113,29 @@ metadata:
             verify_cli.parse_policy_yaml("allowed_paths: []\n")
 
 
+class PlaceholderAssetTests(unittest.TestCase):
+    def test_reports_zero_byte_files_under_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            assets_dir = repo / "assets" / "branding"
+            assets_dir.mkdir(parents=True)
+            empty_file = assets_dir / "logo.png"
+            empty_file.write_bytes(b"")
+            (assets_dir / "banner.png").write_bytes(b"ok")
+
+            violations = verify_cli.empty_placeholder_asset_violations(repo)
+
+        self.assertEqual(violations, ["empty placeholder asset: assets/branding/logo.png"])
+
+    def test_ignores_missing_assets_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+
+            violations = verify_cli.empty_placeholder_asset_violations(repo)
+
+        self.assertEqual(violations, [])
+
+
 class PathMatchingTests(unittest.TestCase):
     def test_allowed_path_matches_exact_file_or_child_path(self) -> None:
         allowed_paths = ("src", "README.md")
@@ -239,6 +262,148 @@ class PreCommitHookTests(unittest.TestCase):
 
 
 class VerifyCliIntegrationTests(unittest.TestCase):
+    def test_passes_without_session_when_session_argument_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - assets\n"
+                "  - policy.yaml\n",
+                encoding="utf-8",
+            )
+            (repo / "assets" / "branding").mkdir(parents=True)
+            (repo / "assets" / "branding" / "logo.png").write_bytes(b"png")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("session: (not provided)", output)
+            self.assertIn("expected: (not specified)", output)
+            self.assertIn(
+                f"verification: {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
+
+    def test_fails_when_explicit_session_path_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - policy.yaml\n",
+                encoding="utf-8",
+            )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("session file not found", stderr.getvalue())
+
+    def test_fails_when_asset_file_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            actual_branch = git_current_branch(repo)
+
+            (repo / "session.json").write_text(
+                f'{{"expected_branch":"{actual_branch}"}}\n',
+                encoding="utf-8",
+            )
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - assets\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+            (repo / "assets" / "branding").mkdir(parents=True)
+            (repo / "assets" / "branding" / "logo.png").write_bytes(b"")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            output = stdout.getvalue()
+            self.assertIn("empty placeholder asset: assets/branding/logo.png", output)
+            self.assertIn(
+                f"verification: {verify_cli.RED}FAILED{verify_cli.RESET}",
+                output,
+            )
+
+    def test_passes_when_asset_files_are_non_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            git_init(repo)
+            actual_branch = git_current_branch(repo)
+
+            (repo / "session.json").write_text(
+                f'{{"expected_branch":"{actual_branch}"}}\n',
+                encoding="utf-8",
+            )
+            (repo / "policy.yaml").write_text(
+                "allowed_paths:\n"
+                "  - assets\n"
+                "  - policy.yaml\n"
+                "  - session.json\n",
+                encoding="utf-8",
+            )
+            (repo / "assets" / "branding").mkdir(parents=True)
+            (repo / "assets" / "branding" / "logo.png").write_bytes(b"png")
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = verify_cli.main(
+                    [
+                        "--session",
+                        str(repo / "session.json"),
+                        "--policy",
+                        str(repo / "policy.yaml"),
+                        "--repo",
+                        str(repo),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn(
+                f"verification: {verify_cli.GREEN}PASSED{verify_cli.RESET}",
+                output,
+            )
+
     def test_warns_for_protected_staged_paths_in_advisory_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
