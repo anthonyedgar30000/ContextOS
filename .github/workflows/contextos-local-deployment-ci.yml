@@ -10,6 +10,7 @@ on:
       - .github/workflows/contextos-local-deployment-ci.yml
       - .github/workflows/helix-query-bridge-ci.yml
       - .contextos/contracts/CTX-0004-contextos-local-deployment-readiness.yaml
+      - .contextos/contracts/CTX-0005-contextos-project-hold.yaml
       - .project/active-work.json
       - .project/handoffs/current-state.md
 
@@ -56,19 +57,31 @@ jobs:
           import json
           from pathlib import Path
 
+          workflow_path = '.github/workflows/contextos-local-deployment-ci.yml'
           state = json.loads(Path('.project/active-work.json').read_text(encoding='utf-8'))
-          matches = [
+          claimed = [
               workstream
               for workstream in state.get('workstreams', [])
-              if workstream.get('workstream_id') == 'contextos-local-deployment-readiness'
+              if workflow_path in set(workstream.get('permitted_paths', []))
           ]
-          assert len(matches) == 1, 'deployment readiness must have exactly one declared workstream'
-          workstream = matches[0]
+          if not claimed:
+              lifecycle = state.get('project_lifecycle', {})
+              policy = lifecycle.get('reconciliation_policy', {})
+              assert lifecycle.get('status') == 'on_hold', (
+                  'an unclaimed deployment workflow is valid only when ContextOS is explicitly on hold'
+              )
+              assert policy.get('routine') == 'skip'
+              assert policy.get('scheduled') == 'skip'
+              assert policy.get('open_pull_request_polling') == 'skip'
+              print('ContextOS is explicitly on hold; no deployment workstream claims this workflow.')
+              raise SystemExit(0)
+
+          assert len(claimed) == 1, 'deployment workflow must have exactly one declared workstream owner'
+          workstream = claimed[0]
           permitted = set(workstream['permitted_paths'])
-          assert workstream['branch'] == 'deploy/contextos-local-readiness'
-          assert workstream['pull_request'] == 15
-          assert '.github/workflows/contextos-local-deployment-ci.yml' in permitted
-          assert '.github/workflows/helix-query-bridge-ci.yml' in permitted
+          assert workstream.get('branch'), 'deployment workstream must declare a branch'
+          assert workstream.get('pull_request') is not None, 'deployment workstream must declare a pull request'
+          assert workflow_path in permitted
           boundary = workstream['capability_boundary']
           assert boundary['pull_request_merge'] is False
           assert boundary['host_install_execution'] is False
